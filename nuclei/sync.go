@@ -87,9 +87,15 @@ func (s *syncer) fetchBundle(ctx context.Context, kind, authToken string) ([]bun
 	if err != nil {
 		return nil, err
 	}
-	var entries []bundleEntry
-	if err := json.Unmarshal(body, &entries); err != nil {
+	var env bundleResponse
+	if err := json.Unmarshal(body, &env); err != nil {
 		return nil, fmt.Errorf("decode bundle response: %w", err)
 	}
-	return entries, nil
+	if !env.Success {
+		if env.Error != nil && env.Error.Message != "" {
+			return nil, fmt.Errorf("bundle endpoint error: %s", env.Error.Message)
+		}
+		return nil, fmt.Errorf("bundle endpoint returned an unsuccessful response")
+	}
+	return env.Data, nil
 }

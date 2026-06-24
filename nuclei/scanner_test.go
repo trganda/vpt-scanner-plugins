@@ -84,7 +84,7 @@ func TestFetchBundle_SetsAuthHeader(t *testing.T) {
 	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
-		_ = json.NewEncoder(w).Encode([]bundleEntry{})
+		_ = json.NewEncoder(w).Encode(bundleResponse{Success: true, Data: []bundleEntry{}})
 	}))
 	defer srv.Close()
 
@@ -101,7 +101,7 @@ func TestFetchBundle_NoTokenOmitsHeader(t *testing.T) {
 	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
-		_ = json.NewEncoder(w).Encode([]bundleEntry{})
+		_ = json.NewEncoder(w).Encode(bundleResponse{Success: true, Data: []bundleEntry{}})
 	}))
 	defer srv.Close()
 
@@ -123,5 +123,41 @@ func TestFetchBundle_401Errors(t *testing.T) {
 	s := &syncer{bundleURL: srv.URL, httpClient: srv.Client()}
 	if _, err := s.fetchBundle(context.Background(), "template", "x"); err == nil {
 		t.Fatal("expected error on 401")
+	}
+}
+
+// Unwraps the response envelope's data array on success.
+func TestFetchBundle_ReturnsEnvelopeData(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(bundleResponse{
+			Success: true,
+			Data:    []bundleEntry{{ID: "tmpl-1", PresignedURL: "https://s3/tmpl-1"}},
+		})
+	}))
+	defer srv.Close()
+
+	s := &syncer{bundleURL: srv.URL, httpClient: srv.Client()}
+	entries, err := s.fetchBundle(context.Background(), "template", "x")
+	if err != nil {
+		t.Fatalf("fetchBundle: %v", err)
+	}
+	if len(entries) != 1 || entries[0].ID != "tmpl-1" {
+		t.Fatalf("entries = %+v, want one entry tmpl-1", entries)
+	}
+}
+
+// A 200 envelope with success=false surfaces the error message.
+func TestFetchBundle_UnsuccessfulEnvelopeErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(bundleResponse{
+			Success: false,
+			Error:   &bundleError{Code: "internal", Message: "boom"},
+		})
+	}))
+	defer srv.Close()
+
+	s := &syncer{bundleURL: srv.URL, httpClient: srv.Client()}
+	if _, err := s.fetchBundle(context.Background(), "template", "x"); err == nil {
+		t.Fatal("expected error on success=false envelope")
 	}
 }

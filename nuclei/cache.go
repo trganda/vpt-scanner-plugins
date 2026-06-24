@@ -12,11 +12,28 @@ import (
 	"time"
 )
 
-// bundleEntry mirrors the JSON returned by GET /v1/templates/bundle.
+// bundleEntry mirrors one element of the data array returned by
+// GET /v1/templates/bundle.
 type bundleEntry struct {
 	ID           string    `json:"id"`
 	PresignedURL string    `json:"presigned_url"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// bundleResponse mirrors the control plane's unified response envelope for the
+// bundle endpoint. The plugin is a separate module and cannot import the REST
+// adapter's Envelope type, so it declares its own minimal view of the fields it
+// reads (data on success, error.message on failure).
+type bundleResponse struct {
+	Success bool          `json:"success"`
+	Data    []bundleEntry `json:"data"`
+	Error   *bundleError  `json:"error"`
+}
+
+// bundleError is the envelope's error payload (a subset of the REST apiError).
+type bundleError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 // manifestEntry records the cache state of one downloaded file.
