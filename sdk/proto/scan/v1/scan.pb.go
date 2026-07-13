@@ -338,7 +338,7 @@ const file_scan_v1_scan_proto_rawDesc = "" +
 	"\n" +
 	"Capability\x12\x1a.scan.v1.CapabilityRequest\x1a\x1b.scan.v1.CapabilityResponse\x12<\n" +
 	"\aExecute\x12\x17.scan.v1.ExecuteRequest\x1a\x18.scan.v1.ExecuteResponse\x12<\n" +
-	"\aPrepare\x12\x17.scan.v1.PrepareRequest\x1a\x18.scan.v1.PrepareResponseBAZ?github.com/trganda/vpt-backend/plugins/sdk/proto/scan/v1;scanv1b\x06proto3"
+	"\aPrepare\x12\x17.scan.v1.PrepareRequest\x1a\x18.scan.v1.PrepareResponseBAZ?github.com/trganda/vpt-scanner-plugins/sdk/proto/scan/v1;scanv1b\x06proto3"
 
 var (
 	file_scan_v1_scan_proto_rawDescOnce sync.Once

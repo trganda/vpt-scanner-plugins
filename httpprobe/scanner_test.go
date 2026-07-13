@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trganda/vpt-backend/plugins/sdk"
+	"github.com/trganda/vpt-scanner-plugins/sdk"
 )
 
 // fakeProber is a double for the prober port so these tests don't drag the

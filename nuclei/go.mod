@@ -1,11 +1,11 @@
-module github.com/trganda/vpt-backend/plugins/nuclei
+module github.com/trganda/vpt-scanner-plugins/nuclei
 
 go 1.26.3
 
 require (
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/projectdiscovery/nuclei/v3 v3.9.0
-	github.com/trganda/vpt-backend/plugins/sdk v0.0.0
+	github.com/trganda/vpt-scanner-plugins/sdk v0.0.0
 )
 
 require (
@@ -406,4 +406,4 @@ require (
 )
 
 // Nested module path under the root module — resolved to the in-repo copy.
-replace github.com/trganda/vpt-backend/plugins/sdk => ../sdk
+replace github.com/trganda/vpt-scanner-plugins/sdk => ../sdk

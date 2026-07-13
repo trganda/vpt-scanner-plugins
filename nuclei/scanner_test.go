@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/trganda/vpt-backend/plugins/sdk"
+	"github.com/trganda/vpt-scanner-plugins/sdk"
 )
 
 // fakeEngine is a double for the engine port so Execute tests don't drag the

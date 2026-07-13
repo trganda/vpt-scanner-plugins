@@ -7,7 +7,7 @@ import (
 
 	goplugin "github.com/hashicorp/go-plugin"
 
-	"github.com/trganda/vpt-backend/plugins/sdk"
+	"github.com/trganda/vpt-scanner-plugins/sdk"
 )
 
 // stubScanner is a Scanner implementation served over the in-memory gRPC

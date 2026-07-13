@@ -1,4 +1,4 @@
-module github.com/trganda/vpt-backend/plugins/httpprobe
+module github.com/trganda/vpt-scanner-plugins/httpprobe
 
 go 1.26.3
 
@@ -8,7 +8,7 @@ require (
 	github.com/projectdiscovery/gologger v1.1.70
 	github.com/projectdiscovery/httpx v1.9.0
 	github.com/projectdiscovery/tlsx v1.2.2
-	github.com/trganda/vpt-backend/plugins/sdk v0.0.0
+	github.com/trganda/vpt-scanner-plugins/sdk v0.0.0
 )
 
 require (
@@ -179,4 +179,4 @@ require (
 )
 
 // Nested module path under the root module — resolved to the in-repo copy.
-replace github.com/trganda/vpt-backend/plugins/sdk => ../sdk
+replace github.com/trganda/vpt-scanner-plugins/sdk => ../sdk

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trganda/vpt-backend/plugins/sdk"
+	"github.com/trganda/vpt-scanner-plugins/sdk"
 )
 
 // fakeScanner is a double for the package-private portScanner port so these

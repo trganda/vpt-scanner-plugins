@@ -1,4 +1,4 @@
-module github.com/trganda/vpt-backend/plugins/portscan
+module github.com/trganda/vpt-scanner-plugins/portscan
 
 go 1.26.3
 
@@ -6,7 +6,7 @@ require (
 	github.com/projectdiscovery/goflags v0.1.74
 	github.com/projectdiscovery/gologger v1.1.70
 	github.com/projectdiscovery/naabu/v2 v2.6.1
-	github.com/trganda/vpt-backend/plugins/sdk v0.0.0
+	github.com/trganda/vpt-scanner-plugins/sdk v0.0.0
 )
 
 require (
@@ -143,4 +143,4 @@ require (
 // The SDK module path is nested under the root module path, so a bare go.work
 // `use` can't resolve it — pin it to the in-repo copy. Safe because plugins are
 // never published; they build from the same commit as the host.
-replace github.com/trganda/vpt-backend/plugins/sdk => ../sdk
+replace github.com/trganda/vpt-scanner-plugins/sdk => ../sdk

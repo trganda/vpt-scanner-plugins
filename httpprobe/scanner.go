@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/trganda/vpt-backend/plugins/sdk"
+	"github.com/trganda/vpt-scanner-plugins/sdk"
 )
 
 // capability is the capability string this plugin advertises. It must match the

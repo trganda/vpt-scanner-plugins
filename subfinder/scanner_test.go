@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trganda/vpt-backend/plugins/sdk"
+	"github.com/trganda/vpt-scanner-plugins/sdk"
 )
 
 // fakeEnum is a double for the enumerator port so these tests don't drag the

@@ -1,4 +1,4 @@
-module github.com/trganda/vpt-backend/plugins/sdk
+module github.com/trganda/vpt-scanner-plugins/sdk
 
 go 1.26.3
 

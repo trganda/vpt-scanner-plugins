@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package scan.v1;
 
-option go_package = "github.com/trganda/vpt-backend/plugins/sdk/proto/scan/v1;scanv1";
+option go_package = "github.com/trganda/vpt-scanner-plugins/sdk/proto/scan/v1;scanv1";
 
 // ScanPlugin is the generic contract every scanner tool plugin implements. It
 // mirrors the host-side scan.Executor port: Capability advertises the tool's

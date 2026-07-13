@@ -1,4 +1,4 @@
-module github.com/trganda/vpt-backend/plugins/subfinder
+module github.com/trganda/vpt-scanner-plugins/subfinder
 
 go 1.26.3
 
@@ -6,7 +6,7 @@ require (
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/projectdiscovery/gologger v1.1.70
 	github.com/projectdiscovery/subfinder/v2 v2.14.0
-	github.com/trganda/vpt-backend/plugins/sdk v0.0.0
+	github.com/trganda/vpt-scanner-plugins/sdk v0.0.0
 )
 
 require (
@@ -138,4 +138,4 @@ require (
 )
 
 // Nested module path under the root module — resolved to the in-repo copy.
-replace github.com/trganda/vpt-backend/plugins/sdk => ../sdk
+replace github.com/trganda/vpt-scanner-plugins/sdk => ../sdk

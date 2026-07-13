@@ -5,7 +5,7 @@
 // this module's go.mod, keeping it out of the scanner host binary.
 package main
 
-import "github.com/trganda/vpt-backend/plugins/sdk"
+import "github.com/trganda/vpt-scanner-plugins/sdk"
 
 func main() {
 	sdk.Serve(newScanner())

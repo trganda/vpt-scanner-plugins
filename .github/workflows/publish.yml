@@ -1,0 +1,106 @@
+name: Build and publish scanner plugin
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.commit.outputs.sha }}
+      capability: ${{ steps.plugin.outputs.capability }}
+      module: ${{ steps.plugin.outputs.module }}
+    steps:
+      - name: Require stable plugin release
+        id: plugin
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          test "$IS_PRERELEASE" = false
+          [[ "$RELEASE_TAG" =~ ^plugin-(portscan|subdomain|httpprobe|vuln)-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          capability="${BASH_REMATCH[1]}"
+          case "$capability" in
+            portscan) module=portscan ;;
+            subdomain) module=subfinder ;;
+            httpprobe) module=httpprobe ;;
+            vuln) module=nuclei ;;
+          esac
+          echo "capability=$capability" >>"$GITHUB_OUTPUT"
+          echo "module=$module" >>"$GITHUB_OUTPUT"
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+
+  build:
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ needs.validate.outputs.module }}/go.mod
+          cache: true
+          cache-dependency-path: |
+            ${{ needs.validate.outputs.module }}/go.sum
+            sdk/go.sum
+      - name: Build plugin
+        working-directory: ${{ needs.validate.outputs.module }}
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          OUTPUT: ../dist/${{ needs.validate.outputs.capability }}_linux_${{ matrix.arch }}
+        run: mkdir -p ../dist && GOWORK=off go build -trimpath -o "$OUTPUT" .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: plugin-${{ needs.validate.outputs.capability }}-linux-${{ matrix.arch }}
+          path: dist/${{ needs.validate.outputs.capability }}_linux_${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 7
+
+  collect:
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      subjects: ${{ steps.subjects.outputs.subjects }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: plugin-*
+          path: dist
+          merge-multiple: true
+      - id: subjects
+        working-directory: dist
+        run: echo "subjects=$(sha256sum *_linux_* | base64 -w0)" >>"$GITHUB_OUTPUT"
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$RELEASE_TAG" dist/* --clobber --repo "$GH_REPO"
+
+  provenance:
+    needs: collect
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: ${{ needs.collect.outputs.subjects }}
+      upload-assets: true

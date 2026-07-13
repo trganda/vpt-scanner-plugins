@@ -14,7 +14,7 @@ import (
 	"github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
 
-	scanv1 "github.com/trganda/vpt-backend/plugins/sdk/proto/scan/v1"
+	scanv1 "github.com/trganda/vpt-scanner-plugins/sdk/proto/scan/v1"
 )
 
 // PluginName is the key under which the single scanner plugin is dispensed.
