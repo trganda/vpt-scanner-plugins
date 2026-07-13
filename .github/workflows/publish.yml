@@ -1,4 +1,4 @@
-name: Build and publish scanner plugin
+name: Build and publish scanner plugins
 
 on:
   release:
@@ -13,25 +13,23 @@ jobs:
     outputs:
       commit: ${{ steps.commit.outputs.sha }}
       capability: ${{ steps.plugin.outputs.capability }}
-      module: ${{ steps.plugin.outputs.module }}
     steps:
-      - name: Require stable plugin release
+      - name: Require stable release
         id: plugin
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           IS_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
           test "$IS_PRERELEASE" = false
-          [[ "$RELEASE_TAG" =~ ^plugin-(portscan|subdomain|httpprobe|vuln)-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          capability="${BASH_REMATCH[1]}"
-          case "$capability" in
-            portscan) module=portscan ;;
-            subdomain) module=subfinder ;;
-            httpprobe) module=httpprobe ;;
-            vuln) module=nuclei ;;
-          esac
+          if [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            capability=all
+          elif [[ "$RELEASE_TAG" =~ ^plugin-(portscan|subdomain|httpprobe|vuln)-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            capability="${BASH_REMATCH[1]}"
+          else
+            echo "unsupported release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
           echo "capability=$capability" >>"$GITHUB_OUTPUT"
-          echo "module=$module" >>"$GITHUB_OUTPUT"
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.release.tag_name }}
@@ -45,29 +43,41 @@ jobs:
       fail-fast: false
       matrix:
         arch: [amd64, arm64]
+        plugin:
+          - capability: portscan
+            module: portscan
+          - capability: subdomain
+            module: subfinder
+          - capability: httpprobe
+            module: httpprobe
+          - capability: vuln
+            module: nuclei
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate.outputs.commit }}
       - uses: actions/setup-go@v6
+        if: needs.validate.outputs.capability == 'all' || needs.validate.outputs.capability == matrix.plugin.capability
         with:
-          go-version-file: ${{ needs.validate.outputs.module }}/go.mod
+          go-version-file: ${{ matrix.plugin.module }}/go.mod
           cache: true
           cache-dependency-path: |
-            ${{ needs.validate.outputs.module }}/go.sum
+            ${{ matrix.plugin.module }}/go.sum
             sdk/go.sum
       - name: Build plugin
-        working-directory: ${{ needs.validate.outputs.module }}
+        if: needs.validate.outputs.capability == 'all' || needs.validate.outputs.capability == matrix.plugin.capability
+        working-directory: ${{ matrix.plugin.module }}
         env:
           CGO_ENABLED: "0"
           GOOS: linux
           GOARCH: ${{ matrix.arch }}
-          OUTPUT: ../dist/${{ needs.validate.outputs.capability }}_linux_${{ matrix.arch }}
+          OUTPUT: ../dist/${{ matrix.plugin.capability }}_linux_${{ matrix.arch }}
         run: mkdir -p ../dist && GOWORK=off go build -trimpath -o "$OUTPUT" .
       - uses: actions/upload-artifact@v7
+        if: needs.validate.outputs.capability == 'all' || needs.validate.outputs.capability == matrix.plugin.capability
         with:
-          name: plugin-${{ needs.validate.outputs.capability }}-linux-${{ matrix.arch }}
-          path: dist/${{ needs.validate.outputs.capability }}_linux_${{ matrix.arch }}
+          name: plugin-${{ matrix.plugin.capability }}-linux-${{ matrix.arch }}
+          path: dist/${{ matrix.plugin.capability }}_linux_${{ matrix.arch }}
           if-no-files-found: error
           retention-days: 7
 

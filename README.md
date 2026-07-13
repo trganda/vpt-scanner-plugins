@@ -12,8 +12,9 @@ Public runtime scanner plugins and the shared go-plugin gRPC SDK for VPT.
 
 ## Releases
 
-Each plugin is released independently using `plugin-<capability>-vX.Y.Z` tags.
-GitHub Actions publishes Linux amd64/arm64 binaries and SLSA provenance.
+Plugins can be released independently using `plugin-<capability>-vX.Y.Z` tags,
+or together using a `vX.Y.Z` tag. GitHub Actions publishes Linux amd64/arm64
+binaries and SLSA provenance.
 
 ```bash
 make test
