@@ -2,11 +2,13 @@ syntax = "proto3";
 
 package scan.v1;
 
+import "google/protobuf/timestamp.proto";
+
 option go_package = "github.com/trganda/vpt-scanner-plugins/sdk/proto/scan/v1;scanv1";
 
 // ScanPlugin is the generic contract every scanner tool plugin implements. It
 // mirrors the host-side scan.Executor port: Capability advertises the tool's
-// capability string, Execute runs one scan, and Prepare is a pre-scan hook
+// capability string, ExecuteStream runs one scan with structured progress, and Prepare is a pre-scan hook
 // (a no-op for every tool except nuclei, which uses it to sync templates).
 //
 // Tool-specific result payloads never appear in this contract: Execute returns
@@ -16,6 +18,7 @@ option go_package = "github.com/trganda/vpt-scanner-plugins/sdk/proto/scan/v1;sc
 service ScanPlugin {
   rpc Capability(CapabilityRequest) returns (CapabilityResponse);
   rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  rpc ExecuteStream(ExecuteRequest) returns (stream ExecuteEvent);
   rpc Prepare(PrepareRequest) returns (PrepareResponse);
 }
 
@@ -36,6 +39,25 @@ message ExecuteResponse {
   bytes raw_json = 2;
   int64 started_at_unix_nano = 3;
   int64 finished_at_unix_nano = 4;
+}
+
+// ExecuteEvent is either a progress event or the terminal result. Exactly one
+// payload is set. Events contain only bounded, deliberately structured fields;
+// plugin stdout/stderr is never part of this protocol.
+message ExecuteEvent {
+  oneof payload {
+    ProgressEvent progress = 1;
+    ExecuteResponse result = 2;
+  }
+}
+
+message ProgressEvent {
+  int64 sequence = 1;
+  string level = 2;
+  string type = 3;
+  string message = 4;
+  map<string, string> fields = 5;
+  google.protobuf.Timestamp occurred_at = 6;
 }
 
 // PrepareRequest carries the control-plane-issued node JWT so a plugin that

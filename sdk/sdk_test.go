@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	goplugin "github.com/hashicorp/go-plugin"
 
@@ -26,7 +27,16 @@ func (s *stubScanner) Prepare(_ context.Context, token string) error {
 }
 
 func (s *stubScanner) Execute(_ context.Context, t sdk.Target) (sdk.Result, error) {
+	return s.ExecuteStream(context.Background(), t, nil)
+}
+
+func (s *stubScanner) ExecuteStream(_ context.Context, t sdk.Target, sink sdk.EventSink) (sdk.Result, error) {
 	s.gotTarget = t
+	if sink != nil {
+		if err := sink(sdk.Event{Sequence: 1, Level: "info", Type: "scan_started", Message: "started", OccurredAt: time.Unix(1, 0).UTC()}); err != nil {
+			return sdk.Result{}, err
+		}
+	}
 	raw, _ := json.Marshal(map[string]any{"host": t.Host, "echo": t.Params["k"]})
 	return sdk.Result{
 		Capability:         "portscan",
@@ -72,6 +82,11 @@ func TestGRPCRoundTrip(t *testing.T) {
 	}
 	if decoded["host"] != "example.com" || decoded["echo"] != "v" {
 		t.Fatalf("raw_json payload not round-tripped: %v", decoded)
+	}
+	var events []sdk.Event
+	res, err = sc.ExecuteStream(ctx, sdk.Target{Host: "example.com"}, func(event sdk.Event) error { events = append(events, event); return nil })
+	if err != nil || len(events) != 1 || events[0].Type != "scan_started" || res.Capability != "portscan" {
+		t.Fatalf("ExecuteStream = %+v, events=%+v, err=%v", res, events, err)
 	}
 
 	if err := sc.Prepare(ctx, "tok-123"); err != nil {

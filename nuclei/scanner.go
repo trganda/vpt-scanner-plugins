@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,13 +56,30 @@ func (s *scanner) Prepare(ctx context.Context, authToken string) error {
 }
 
 func (s *scanner) Execute(ctx context.Context, t sdk.Target) (sdk.Result, error) {
+	return s.ExecuteStream(ctx, t, nil)
+}
+
+func (s *scanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.EventSink) (sdk.Result, error) {
+	seq := int64(0)
+	emit := func(level, typ, message string, fields map[string]string) error {
+		seq++
+		if sink == nil {
+			return nil
+		}
+		e := sdk.NewEvent(level, typ, message, fields)
+		e.Sequence = seq
+		return sink(e)
+	}
+	_ = emit("info", "scan_started", "vulnerability scan started", nil)
 	if s.initErr != nil {
+		_ = emit("error", "scan_failed", "vulnerability scan failed", map[string]string{"reason": "initialization"})
 		return sdk.Result{}, s.initErr
 	}
 
 	start := time.Now()
 	findings, err := s.eng.Scan(ctx, strings.TrimSpace(t.Host), t.Params)
 	if err != nil {
+		_ = emit("error", "scan_failed", "vulnerability scan failed", map[string]string{"reason": "scanner_error"})
 		return sdk.Result{}, err
 	}
 
@@ -71,8 +89,10 @@ func (s *scanner) Execute(ctx context.Context, t sdk.Target) (sdk.Result, error)
 		"count":    len(findings),
 	})
 	if err != nil {
+		_ = emit("error", "scan_failed", "vulnerability scan failed", map[string]string{"reason": "result_encoding"})
 		return sdk.Result{}, err
 	}
+	_ = emit("info", "scan_completed", "vulnerability scan completed", map[string]string{"count": strconv.Itoa(len(findings))})
 
 	return sdk.Result{
 		Capability:         capability,

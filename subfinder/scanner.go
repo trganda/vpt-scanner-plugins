@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,13 +46,30 @@ func (s *scanner) Capability(context.Context) (string, error) { return capabilit
 func (s *scanner) Prepare(context.Context, string) error { return nil }
 
 func (s *scanner) Execute(ctx context.Context, t sdk.Target) (sdk.Result, error) {
+	return s.ExecuteStream(ctx, t, nil)
+}
+
+func (s *scanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.EventSink) (sdk.Result, error) {
+	seq := int64(0)
+	emit := func(level, typ, message string, fields map[string]string) error {
+		seq++
+		if sink == nil {
+			return nil
+		}
+		e := sdk.NewEvent(level, typ, message, fields)
+		e.Sequence = seq
+		return sink(e)
+	}
+	_ = emit("info", "scan_started", "subdomain scan started", nil)
 	if s.initErr != nil {
+		_ = emit("error", "scan_failed", "subdomain scan failed", map[string]string{"reason": "initialization"})
 		return sdk.Result{}, s.initErr
 	}
 
 	start := time.Now()
 	domain := strings.TrimSpace(t.Host)
 	if domain == "" {
+		_ = emit("error", "scan_failed", "subdomain scan failed", map[string]string{"reason": "invalid_target"})
 		return sdk.Result{}, errors.New("subdomain: empty target host")
 	}
 
@@ -63,6 +81,7 @@ func (s *scanner) Execute(ctx context.Context, t sdk.Target) (sdk.Result, error)
 
 	findings, err := s.enum.Enumerate(ctx, domain)
 	if err != nil {
+		_ = emit("error", "scan_failed", "subdomain scan failed", map[string]string{"reason": "scanner_error"})
 		return sdk.Result{}, err
 	}
 
@@ -80,8 +99,10 @@ func (s *scanner) Execute(ctx context.Context, t sdk.Target) (sdk.Result, error)
 		"count":      len(hosts),
 	})
 	if err != nil {
+		_ = emit("error", "scan_failed", "subdomain scan failed", map[string]string{"reason": "result_encoding"})
 		return sdk.Result{}, err
 	}
+	_ = emit("info", "scan_completed", "subdomain scan completed", map[string]string{"count": strconv.Itoa(len(hosts))})
 
 	return sdk.Result{
 		Capability:         capability,

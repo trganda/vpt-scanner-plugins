@@ -47,12 +47,16 @@ func TestExecute_Aggregates(t *testing.T) {
 	}}
 	s := newWithEnumerator(fake, 0)
 
-	res, err := s.Execute(context.Background(), sdk.Target{Host: "example.com"})
+	var events []sdk.Event
+	res, err := s.ExecuteStream(context.Background(), sdk.Target{Host: "example.com"}, func(e sdk.Event) error { events = append(events, e); return nil })
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if res.Capability != capability {
 		t.Fatalf("capability = %q", res.Capability)
+	}
+	if len(events) != 2 || events[0].Type != "scan_started" || events[1].Type != "scan_completed" {
+		t.Fatalf("events = %+v", events)
 	}
 	raw := decodeRaw(t, res)
 	if raw["domain"] != "example.com" {

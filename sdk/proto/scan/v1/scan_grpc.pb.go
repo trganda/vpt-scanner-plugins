@@ -19,9 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ScanPlugin_Capability_FullMethodName = "/scan.v1.ScanPlugin/Capability"
-	ScanPlugin_Execute_FullMethodName    = "/scan.v1.ScanPlugin/Execute"
-	ScanPlugin_Prepare_FullMethodName    = "/scan.v1.ScanPlugin/Prepare"
+	ScanPlugin_Capability_FullMethodName    = "/scan.v1.ScanPlugin/Capability"
+	ScanPlugin_Execute_FullMethodName       = "/scan.v1.ScanPlugin/Execute"
+	ScanPlugin_ExecuteStream_FullMethodName = "/scan.v1.ScanPlugin/ExecuteStream"
+	ScanPlugin_Prepare_FullMethodName       = "/scan.v1.ScanPlugin/Prepare"
 )
 
 // ScanPluginClient is the client API for ScanPlugin service.
@@ -30,7 +31,7 @@ const (
 //
 // ScanPlugin is the generic contract every scanner tool plugin implements. It
 // mirrors the host-side scan.Executor port: Capability advertises the tool's
-// capability string, Execute runs one scan, and Prepare is a pre-scan hook
+// capability string, ExecuteStream runs one scan with structured progress, and Prepare is a pre-scan hook
 // (a no-op for every tool except nuclei, which uses it to sync templates).
 //
 // Tool-specific result payloads never appear in this contract: Execute returns
@@ -40,6 +41,7 @@ const (
 type ScanPluginClient interface {
 	Capability(ctx context.Context, in *CapabilityRequest, opts ...grpc.CallOption) (*CapabilityResponse, error)
 	Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (*ExecuteResponse, error)
+	ExecuteStream(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteEvent], error)
 	Prepare(ctx context.Context, in *PrepareRequest, opts ...grpc.CallOption) (*PrepareResponse, error)
 }
 
@@ -71,6 +73,25 @@ func (c *scanPluginClient) Execute(ctx context.Context, in *ExecuteRequest, opts
 	return out, nil
 }
 
+func (c *scanPluginClient) ExecuteStream(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &ScanPlugin_ServiceDesc.Streams[0], ScanPlugin_ExecuteStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ExecuteRequest, ExecuteEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ScanPlugin_ExecuteStreamClient = grpc.ServerStreamingClient[ExecuteEvent]
+
 func (c *scanPluginClient) Prepare(ctx context.Context, in *PrepareRequest, opts ...grpc.CallOption) (*PrepareResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PrepareResponse)
@@ -87,7 +108,7 @@ func (c *scanPluginClient) Prepare(ctx context.Context, in *PrepareRequest, opts
 //
 // ScanPlugin is the generic contract every scanner tool plugin implements. It
 // mirrors the host-side scan.Executor port: Capability advertises the tool's
-// capability string, Execute runs one scan, and Prepare is a pre-scan hook
+// capability string, ExecuteStream runs one scan with structured progress, and Prepare is a pre-scan hook
 // (a no-op for every tool except nuclei, which uses it to sync templates).
 //
 // Tool-specific result payloads never appear in this contract: Execute returns
@@ -97,6 +118,7 @@ func (c *scanPluginClient) Prepare(ctx context.Context, in *PrepareRequest, opts
 type ScanPluginServer interface {
 	Capability(context.Context, *CapabilityRequest) (*CapabilityResponse, error)
 	Execute(context.Context, *ExecuteRequest) (*ExecuteResponse, error)
+	ExecuteStream(*ExecuteRequest, grpc.ServerStreamingServer[ExecuteEvent]) error
 	Prepare(context.Context, *PrepareRequest) (*PrepareResponse, error)
 	mustEmbedUnimplementedScanPluginServer()
 }
@@ -113,6 +135,9 @@ func (UnimplementedScanPluginServer) Capability(context.Context, *CapabilityRequ
 }
 func (UnimplementedScanPluginServer) Execute(context.Context, *ExecuteRequest) (*ExecuteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Execute not implemented")
+}
+func (UnimplementedScanPluginServer) ExecuteStream(*ExecuteRequest, grpc.ServerStreamingServer[ExecuteEvent]) error {
+	return status.Error(codes.Unimplemented, "method ExecuteStream not implemented")
 }
 func (UnimplementedScanPluginServer) Prepare(context.Context, *PrepareRequest) (*PrepareResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Prepare not implemented")
@@ -174,6 +199,17 @@ func _ScanPlugin_Execute_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ScanPlugin_ExecuteStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ExecuteRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(ScanPluginServer).ExecuteStream(m, &grpc.GenericServerStream[ExecuteRequest, ExecuteEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ScanPlugin_ExecuteStreamServer = grpc.ServerStreamingServer[ExecuteEvent]
+
 func _ScanPlugin_Prepare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PrepareRequest)
 	if err := dec(in); err != nil {
@@ -212,6 +248,12 @@ var ScanPlugin_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _ScanPlugin_Prepare_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "ExecuteStream",
+			Handler:       _ScanPlugin_ExecuteStream_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "scan/v1/scan.proto",
 }

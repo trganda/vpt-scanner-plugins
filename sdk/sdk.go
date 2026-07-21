@@ -10,9 +10,12 @@ package sdk
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	scanv1 "github.com/trganda/vpt-scanner-plugins/sdk/proto/scan/v1"
 )
@@ -24,7 +27,7 @@ const PluginName = "scanner"
 // plugin binary run directly prints a friendly message), not a security
 // boundary. ProtocolVersion is bumped only on a breaking contract change.
 var Handshake = plugin.HandshakeConfig{
-	ProtocolVersion:  1,
+	ProtocolVersion:  2,
 	MagicCookieKey:   "VPT_SCAN_PLUGIN",
 	MagicCookieValue: "vpt-scanner-plugin",
 }
@@ -44,6 +47,28 @@ type Result struct {
 	FinishedAtUnixNano int64
 }
 
+// Event is a safe, structured progress update. Sequence is local to one
+// ExecuteStream call. Fields are intentionally string-valued and bounded by
+// the bridge; implementations must not put credentials, parameters, bodies,
+// or tool output in an event.
+type Event struct {
+	Sequence   int64
+	Level      string
+	Type       string
+	Message    string
+	Fields     map[string]string
+	OccurredAt time.Time
+}
+
+// EventSink receives progress events. Returning an error stops delivery and
+// causes the scan to fail without exposing tool output.
+type EventSink func(Event) error
+
+// NewEvent constructs a progress event with the current UTC timestamp.
+func NewEvent(level, typ, message string, fields map[string]string) Event {
+	return Event{Level: level, Type: typ, Message: message, Fields: fields, OccurredAt: time.Now().UTC()}
+}
+
 // Scanner is the interface a plugin implements and the host consumes. It is the
 // gRPC-friendly mirror of the host's scan.Executor port.
 type Scanner interface {
@@ -51,6 +76,7 @@ type Scanner interface {
 	Capability(ctx context.Context) (string, error)
 	// Execute runs one scan against t and returns the tool-specific result.
 	Execute(ctx context.Context, t Target) (Result, error)
+	ExecuteStream(ctx context.Context, t Target, sink EventSink) (Result, error)
 	// Prepare is a pre-scan hook. Every tool except nuclei returns nil; nuclei
 	// uses authToken to sync its template bundle before scans run.
 	Prepare(ctx context.Context, authToken string) error
@@ -118,6 +144,40 @@ func (m *GRPCClient) Execute(ctx context.Context, t Target) (Result, error) {
 	}, nil
 }
 
+func (m *GRPCClient) ExecuteStream(ctx context.Context, t Target, sink EventSink) (Result, error) {
+	stream, err := m.client.ExecuteStream(ctx, &scanv1.ExecuteRequest{Host: t.Host, Params: t.Params})
+	if err != nil {
+		return Result{}, err
+	}
+	for {
+		msg, recvErr := stream.Recv()
+		if recvErr != nil {
+			return Result{}, recvErr
+		}
+		if progress := msg.GetProgress(); progress != nil {
+			if sink != nil {
+				occurred := time.Now().UTC()
+				if progress.GetOccurredAt() != nil {
+					occurred = progress.GetOccurredAt().AsTime()
+				}
+				e := Event{Sequence: progress.GetSequence(), Level: progress.GetLevel(), Type: progress.GetType(), Message: progress.GetMessage(), Fields: progress.GetFields(), OccurredAt: occurred}
+				if err := sink(e); err != nil {
+					return Result{}, err
+				}
+			}
+			continue
+		}
+		if response := msg.GetResult(); response != nil {
+			return resultFromProto(response), nil
+		}
+		return Result{}, fmt.Errorf("scan plugin returned an empty execute event")
+	}
+}
+
+func resultFromProto(resp *scanv1.ExecuteResponse) Result {
+	return Result{Capability: resp.GetCapability(), RawJSON: resp.GetRawJson(), StartedAtUnixNano: resp.GetStartedAtUnixNano(), FinishedAtUnixNano: resp.GetFinishedAtUnixNano()}
+}
+
 func (m *GRPCClient) Prepare(ctx context.Context, authToken string) error {
 	_, err := m.client.Prepare(ctx, &scanv1.PrepareRequest{AuthToken: authToken})
 	return err
@@ -148,6 +208,37 @@ func (m *gRPCServer) Execute(ctx context.Context, req *scanv1.ExecuteRequest) (*
 		StartedAtUnixNano:  res.StartedAtUnixNano,
 		FinishedAtUnixNano: res.FinishedAtUnixNano,
 	}, nil
+}
+
+func (m *gRPCServer) ExecuteStream(req *scanv1.ExecuteRequest, stream scanv1.ScanPlugin_ExecuteStreamServer) error {
+	res, err := m.impl.ExecuteStream(stream.Context(), Target{Host: req.GetHost(), Params: req.GetParams()}, func(event Event) error {
+		if event.OccurredAt.IsZero() {
+			event.OccurredAt = time.Now().UTC()
+		}
+		return stream.Send(&scanv1.ExecuteEvent{Payload: &scanv1.ExecuteEvent_Progress{Progress: &scanv1.ProgressEvent{Sequence: event.Sequence, Level: event.Level, Type: event.Type, Message: event.Message, Fields: boundedFields(event.Fields), OccurredAt: timestamppb.New(event.OccurredAt)}}})
+	})
+	if err != nil {
+		return err
+	}
+	return stream.Send(&scanv1.ExecuteEvent{Payload: &scanv1.ExecuteEvent_Result{Result: &scanv1.ExecuteResponse{Capability: res.Capability, RawJson: res.RawJSON, StartedAtUnixNano: res.StartedAtUnixNano, FinishedAtUnixNano: res.FinishedAtUnixNano}}})
+}
+
+func boundedFields(fields map[string]string) map[string]string {
+	const maxFields, maxValue = 16, 256
+	out := make(map[string]string, len(fields))
+	for key, value := range fields {
+		if len(out) >= maxFields {
+			break
+		}
+		if len(key) > maxValue {
+			key = key[:maxValue]
+		}
+		if len(value) > maxValue {
+			value = value[:maxValue]
+		}
+		out[key] = value
+	}
+	return out
 }
 
 func (m *gRPCServer) Prepare(ctx context.Context, req *scanv1.PrepareRequest) (*scanv1.PrepareResponse, error) {

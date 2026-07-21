@@ -9,6 +9,7 @@ package scanv1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -222,6 +223,175 @@ func (x *ExecuteResponse) GetFinishedAtUnixNano() int64 {
 	return 0
 }
 
+// ExecuteEvent is either a progress event or the terminal result. Exactly one
+// payload is set. Events contain only bounded, deliberately structured fields;
+// plugin stdout/stderr is never part of this protocol.
+type ExecuteEvent struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Payload:
+	//
+	//	*ExecuteEvent_Progress
+	//	*ExecuteEvent_Result
+	Payload       isExecuteEvent_Payload `protobuf_oneof:"payload"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExecuteEvent) Reset() {
+	*x = ExecuteEvent{}
+	mi := &file_scan_v1_scan_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExecuteEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExecuteEvent) ProtoMessage() {}
+
+func (x *ExecuteEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_scan_v1_scan_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExecuteEvent.ProtoReflect.Descriptor instead.
+func (*ExecuteEvent) Descriptor() ([]byte, []int) {
+	return file_scan_v1_scan_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ExecuteEvent) GetPayload() isExecuteEvent_Payload {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *ExecuteEvent) GetProgress() *ProgressEvent {
+	if x != nil {
+		if x, ok := x.Payload.(*ExecuteEvent_Progress); ok {
+			return x.Progress
+		}
+	}
+	return nil
+}
+
+func (x *ExecuteEvent) GetResult() *ExecuteResponse {
+	if x != nil {
+		if x, ok := x.Payload.(*ExecuteEvent_Result); ok {
+			return x.Result
+		}
+	}
+	return nil
+}
+
+type isExecuteEvent_Payload interface {
+	isExecuteEvent_Payload()
+}
+
+type ExecuteEvent_Progress struct {
+	Progress *ProgressEvent `protobuf:"bytes,1,opt,name=progress,proto3,oneof"`
+}
+
+type ExecuteEvent_Result struct {
+	Result *ExecuteResponse `protobuf:"bytes,2,opt,name=result,proto3,oneof"`
+}
+
+func (*ExecuteEvent_Progress) isExecuteEvent_Payload() {}
+
+func (*ExecuteEvent_Result) isExecuteEvent_Payload() {}
+
+type ProgressEvent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Sequence      int64                  `protobuf:"varint,1,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	Level         string                 `protobuf:"bytes,2,opt,name=level,proto3" json:"level,omitempty"`
+	Type          string                 `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
+	Message       string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	Fields        map[string]string      `protobuf:"bytes,5,rep,name=fields,proto3" json:"fields,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	OccurredAt    *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=occurred_at,json=occurredAt,proto3" json:"occurred_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProgressEvent) Reset() {
+	*x = ProgressEvent{}
+	mi := &file_scan_v1_scan_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProgressEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProgressEvent) ProtoMessage() {}
+
+func (x *ProgressEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_scan_v1_scan_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProgressEvent.ProtoReflect.Descriptor instead.
+func (*ProgressEvent) Descriptor() ([]byte, []int) {
+	return file_scan_v1_scan_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ProgressEvent) GetSequence() int64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *ProgressEvent) GetLevel() string {
+	if x != nil {
+		return x.Level
+	}
+	return ""
+}
+
+func (x *ProgressEvent) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *ProgressEvent) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *ProgressEvent) GetFields() map[string]string {
+	if x != nil {
+		return x.Fields
+	}
+	return nil
+}
+
+func (x *ProgressEvent) GetOccurredAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.OccurredAt
+	}
+	return nil
+}
+
 // PrepareRequest carries the control-plane-issued node JWT so a plugin that
 // needs to fetch remote state (nuclei: the template bundle) can authenticate.
 // The token is read fresh at call time on the host side, so it can't be a
@@ -235,7 +405,7 @@ type PrepareRequest struct {
 
 func (x *PrepareRequest) Reset() {
 	*x = PrepareRequest{}
-	mi := &file_scan_v1_scan_proto_msgTypes[4]
+	mi := &file_scan_v1_scan_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -247,7 +417,7 @@ func (x *PrepareRequest) String() string {
 func (*PrepareRequest) ProtoMessage() {}
 
 func (x *PrepareRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_scan_v1_scan_proto_msgTypes[4]
+	mi := &file_scan_v1_scan_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -260,7 +430,7 @@ func (x *PrepareRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrepareRequest.ProtoReflect.Descriptor instead.
 func (*PrepareRequest) Descriptor() ([]byte, []int) {
-	return file_scan_v1_scan_proto_rawDescGZIP(), []int{4}
+	return file_scan_v1_scan_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *PrepareRequest) GetAuthToken() string {
@@ -278,7 +448,7 @@ type PrepareResponse struct {
 
 func (x *PrepareResponse) Reset() {
 	*x = PrepareResponse{}
-	mi := &file_scan_v1_scan_proto_msgTypes[5]
+	mi := &file_scan_v1_scan_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -290,7 +460,7 @@ func (x *PrepareResponse) String() string {
 func (*PrepareResponse) ProtoMessage() {}
 
 func (x *PrepareResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_scan_v1_scan_proto_msgTypes[5]
+	mi := &file_scan_v1_scan_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -303,14 +473,14 @@ func (x *PrepareResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrepareResponse.ProtoReflect.Descriptor instead.
 func (*PrepareResponse) Descriptor() ([]byte, []int) {
-	return file_scan_v1_scan_proto_rawDescGZIP(), []int{5}
+	return file_scan_v1_scan_proto_rawDescGZIP(), []int{7}
 }
 
 var File_scan_v1_scan_proto protoreflect.FileDescriptor
 
 const file_scan_v1_scan_proto_rawDesc = "" +
 	"\n" +
-	"\x12scan/v1/scan.proto\x12\ascan.v1\"\x13\n" +
+	"\x12scan/v1/scan.proto\x12\ascan.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x13\n" +
 	"\x11CapabilityRequest\"4\n" +
 	"\x12CapabilityResponse\x12\x1e\n" +
 	"\n" +
@@ -328,16 +498,32 @@ const file_scan_v1_scan_proto_rawDesc = "" +
 	"capability\x12\x19\n" +
 	"\braw_json\x18\x02 \x01(\fR\arawJson\x12/\n" +
 	"\x14started_at_unix_nano\x18\x03 \x01(\x03R\x11startedAtUnixNano\x121\n" +
-	"\x15finished_at_unix_nano\x18\x04 \x01(\x03R\x12finishedAtUnixNano\"/\n" +
+	"\x15finished_at_unix_nano\x18\x04 \x01(\x03R\x12finishedAtUnixNano\"\x83\x01\n" +
+	"\fExecuteEvent\x124\n" +
+	"\bprogress\x18\x01 \x01(\v2\x16.scan.v1.ProgressEventH\x00R\bprogress\x122\n" +
+	"\x06result\x18\x02 \x01(\v2\x18.scan.v1.ExecuteResponseH\x00R\x06resultB\t\n" +
+	"\apayload\"\xa3\x02\n" +
+	"\rProgressEvent\x12\x1a\n" +
+	"\bsequence\x18\x01 \x01(\x03R\bsequence\x12\x14\n" +
+	"\x05level\x18\x02 \x01(\tR\x05level\x12\x12\n" +
+	"\x04type\x18\x03 \x01(\tR\x04type\x12\x18\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\x12:\n" +
+	"\x06fields\x18\x05 \x03(\v2\".scan.v1.ProgressEvent.FieldsEntryR\x06fields\x12;\n" +
+	"\voccurred_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"occurredAt\x1a9\n" +
+	"\vFieldsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"/\n" +
 	"\x0ePrepareRequest\x12\x1d\n" +
 	"\n" +
 	"auth_token\x18\x01 \x01(\tR\tauthToken\"\x11\n" +
-	"\x0fPrepareResponse2\xcf\x01\n" +
+	"\x0fPrepareResponse2\x92\x02\n" +
 	"\n" +
 	"ScanPlugin\x12E\n" +
 	"\n" +
 	"Capability\x12\x1a.scan.v1.CapabilityRequest\x1a\x1b.scan.v1.CapabilityResponse\x12<\n" +
-	"\aExecute\x12\x17.scan.v1.ExecuteRequest\x1a\x18.scan.v1.ExecuteResponse\x12<\n" +
+	"\aExecute\x12\x17.scan.v1.ExecuteRequest\x1a\x18.scan.v1.ExecuteResponse\x12A\n" +
+	"\rExecuteStream\x12\x17.scan.v1.ExecuteRequest\x1a\x15.scan.v1.ExecuteEvent0\x01\x12<\n" +
 	"\aPrepare\x12\x17.scan.v1.PrepareRequest\x1a\x18.scan.v1.PrepareResponseBAZ?github.com/trganda/vpt-scanner-plugins/sdk/proto/scan/v1;scanv1b\x06proto3"
 
 var (
@@ -352,29 +538,39 @@ func file_scan_v1_scan_proto_rawDescGZIP() []byte {
 	return file_scan_v1_scan_proto_rawDescData
 }
 
-var file_scan_v1_scan_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_scan_v1_scan_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_scan_v1_scan_proto_goTypes = []any{
-	(*CapabilityRequest)(nil),  // 0: scan.v1.CapabilityRequest
-	(*CapabilityResponse)(nil), // 1: scan.v1.CapabilityResponse
-	(*ExecuteRequest)(nil),     // 2: scan.v1.ExecuteRequest
-	(*ExecuteResponse)(nil),    // 3: scan.v1.ExecuteResponse
-	(*PrepareRequest)(nil),     // 4: scan.v1.PrepareRequest
-	(*PrepareResponse)(nil),    // 5: scan.v1.PrepareResponse
-	nil,                        // 6: scan.v1.ExecuteRequest.ParamsEntry
+	(*CapabilityRequest)(nil),     // 0: scan.v1.CapabilityRequest
+	(*CapabilityResponse)(nil),    // 1: scan.v1.CapabilityResponse
+	(*ExecuteRequest)(nil),        // 2: scan.v1.ExecuteRequest
+	(*ExecuteResponse)(nil),       // 3: scan.v1.ExecuteResponse
+	(*ExecuteEvent)(nil),          // 4: scan.v1.ExecuteEvent
+	(*ProgressEvent)(nil),         // 5: scan.v1.ProgressEvent
+	(*PrepareRequest)(nil),        // 6: scan.v1.PrepareRequest
+	(*PrepareResponse)(nil),       // 7: scan.v1.PrepareResponse
+	nil,                           // 8: scan.v1.ExecuteRequest.ParamsEntry
+	nil,                           // 9: scan.v1.ProgressEvent.FieldsEntry
+	(*timestamppb.Timestamp)(nil), // 10: google.protobuf.Timestamp
 }
 var file_scan_v1_scan_proto_depIdxs = []int32{
-	6, // 0: scan.v1.ExecuteRequest.params:type_name -> scan.v1.ExecuteRequest.ParamsEntry
-	0, // 1: scan.v1.ScanPlugin.Capability:input_type -> scan.v1.CapabilityRequest
-	2, // 2: scan.v1.ScanPlugin.Execute:input_type -> scan.v1.ExecuteRequest
-	4, // 3: scan.v1.ScanPlugin.Prepare:input_type -> scan.v1.PrepareRequest
-	1, // 4: scan.v1.ScanPlugin.Capability:output_type -> scan.v1.CapabilityResponse
-	3, // 5: scan.v1.ScanPlugin.Execute:output_type -> scan.v1.ExecuteResponse
-	5, // 6: scan.v1.ScanPlugin.Prepare:output_type -> scan.v1.PrepareResponse
-	4, // [4:7] is the sub-list for method output_type
-	1, // [1:4] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	8,  // 0: scan.v1.ExecuteRequest.params:type_name -> scan.v1.ExecuteRequest.ParamsEntry
+	5,  // 1: scan.v1.ExecuteEvent.progress:type_name -> scan.v1.ProgressEvent
+	3,  // 2: scan.v1.ExecuteEvent.result:type_name -> scan.v1.ExecuteResponse
+	9,  // 3: scan.v1.ProgressEvent.fields:type_name -> scan.v1.ProgressEvent.FieldsEntry
+	10, // 4: scan.v1.ProgressEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	0,  // 5: scan.v1.ScanPlugin.Capability:input_type -> scan.v1.CapabilityRequest
+	2,  // 6: scan.v1.ScanPlugin.Execute:input_type -> scan.v1.ExecuteRequest
+	2,  // 7: scan.v1.ScanPlugin.ExecuteStream:input_type -> scan.v1.ExecuteRequest
+	6,  // 8: scan.v1.ScanPlugin.Prepare:input_type -> scan.v1.PrepareRequest
+	1,  // 9: scan.v1.ScanPlugin.Capability:output_type -> scan.v1.CapabilityResponse
+	3,  // 10: scan.v1.ScanPlugin.Execute:output_type -> scan.v1.ExecuteResponse
+	4,  // 11: scan.v1.ScanPlugin.ExecuteStream:output_type -> scan.v1.ExecuteEvent
+	7,  // 12: scan.v1.ScanPlugin.Prepare:output_type -> scan.v1.PrepareResponse
+	9,  // [9:13] is the sub-list for method output_type
+	5,  // [5:9] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_scan_v1_scan_proto_init() }
@@ -382,13 +578,17 @@ func file_scan_v1_scan_proto_init() {
 	if File_scan_v1_scan_proto != nil {
 		return
 	}
+	file_scan_v1_scan_proto_msgTypes[4].OneofWrappers = []any{
+		(*ExecuteEvent_Progress)(nil),
+		(*ExecuteEvent_Result)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_scan_v1_scan_proto_rawDesc), len(file_scan_v1_scan_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

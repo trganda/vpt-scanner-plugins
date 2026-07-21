@@ -10,6 +10,16 @@ Public runtime scanner plugins and the shared go-plugin gRPC SDK for VPT.
 - `httpprobe`: httpx-backed HTTP probing (`httpprobe`).
 - `nuclei`: nuclei-backed vulnerability scanning (`vuln`).
 
+## Protocol
+
+The SDK protocol is version 2. The go-plugin handshake is `ProtocolVersion: 2`
+and `ScanPlugin.ExecuteStream` is the canonical scan operation: it delivers
+structured, bounded progress events followed by one terminal result. Events
+contain a per-call sequence, level, type, safe message, string fields, and UTC
+timestamp; plugin stdout/stderr, credentials, parameters, and request/response
+bodies are never captured. `Execute` remains available as a compatibility
+operation.
+
 ## Releases
 
 Plugins can be released independently using `plugin-<capability>-vX.Y.Z` tags,

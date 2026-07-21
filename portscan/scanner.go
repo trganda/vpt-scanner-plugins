@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,9 +39,25 @@ func (s *scanner) Capability(context.Context) (string, error) { return capabilit
 func (s *scanner) Prepare(context.Context, string) error { return nil }
 
 func (s *scanner) Execute(ctx context.Context, t sdk.Target) (sdk.Result, error) {
+	return s.ExecuteStream(ctx, t, nil)
+}
+
+func (s *scanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.EventSink) (sdk.Result, error) {
 	start := time.Now()
+	seq := int64(0)
+	emit := func(level, typ, message string, fields map[string]string) error {
+		seq++
+		if sink == nil {
+			return nil
+		}
+		e := sdk.NewEvent(level, typ, message, fields)
+		e.Sequence = seq
+		return sink(e)
+	}
+	_ = emit("info", "scan_started", "port scan started", nil)
 	host := strings.TrimSpace(t.Host)
 	if host == "" {
+		_ = emit("error", "scan_failed", "port scan failed", map[string]string{"reason": "invalid_target"})
 		return sdk.Result{}, errors.New("portscan: empty target host")
 	}
 
@@ -59,6 +76,7 @@ func (s *scanner) Execute(ctx context.Context, t sdk.Target) (sdk.Result, error)
 
 	found, err := s.ps.Scan(ctx, host, ports)
 	if err != nil {
+		_ = emit("error", "scan_failed", "port scan failed", map[string]string{"reason": "scanner_error"})
 		return sdk.Result{}, err
 	}
 
@@ -68,8 +86,10 @@ func (s *scanner) Execute(ctx context.Context, t sdk.Target) (sdk.Result, error)
 		"count": len(found),
 	})
 	if err != nil {
+		_ = emit("error", "scan_failed", "port scan failed", map[string]string{"reason": "result_encoding"})
 		return sdk.Result{}, err
 	}
+	_ = emit("info", "scan_completed", "port scan completed", map[string]string{"count": strconv.Itoa(len(found))})
 
 	return sdk.Result{
 		Capability:         capability,

@@ -30,12 +30,16 @@ func TestExecute_RawShape(t *testing.T) {
 	}}
 	s := newWithEngine(fake)
 
-	res, err := s.Execute(context.Background(), sdk.Target{Host: "https://t"})
+	var events []sdk.Event
+	res, err := s.ExecuteStream(context.Background(), sdk.Target{Host: "https://t"}, func(e sdk.Event) error { events = append(events, e); return nil })
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if res.Capability != capability {
 		t.Fatalf("capability = %q", res.Capability)
+	}
+	if len(events) != 2 || events[0].Type != "scan_started" || events[1].Type != "scan_completed" {
+		t.Fatalf("events = %+v", events)
 	}
 	var raw map[string]any
 	if err := json.Unmarshal(res.RawJSON, &raw); err != nil {
