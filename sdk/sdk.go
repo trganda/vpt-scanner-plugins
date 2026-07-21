@@ -52,7 +52,8 @@ type Result struct {
 // Event is a safe, structured progress update. Sequence is local to one
 // ExecuteStream call. Fields are intentionally string-valued and bounded by
 // the bridge; implementations must not put credentials, parameters, bodies,
-// or tool output in an event.
+// or tool output in an event. Log events use Fields["line"] for lossless raw
+// output and Fields["stream"] with values stdout or stderr.
 type Event struct {
 	Sequence   int64
 	Level      string
@@ -235,7 +236,7 @@ func boundedFields(fields map[string]string) map[string]string {
 		if len(key) > maxValue {
 			key = key[:maxValue]
 		}
-		if len(value) > maxValue {
+		if key != "line" && len(value) > maxValue {
 			value = value[:maxValue]
 		}
 		out[key] = value
