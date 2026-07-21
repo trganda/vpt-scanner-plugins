@@ -27,7 +27,9 @@ const PluginName = "scanner"
 // plugin binary run directly prints a friendly message), not a security
 // boundary. ProtocolVersion is bumped only on a breaking contract change.
 var Handshake = plugin.HandshakeConfig{
-	ProtocolVersion:  2,
+	// ExecuteStream is an additive gRPC method, so retain handshake version 1
+	// for rolling compatibility with hosts and plugins using Execute.
+	ProtocolVersion:  1,
 	MagicCookieKey:   "VPT_SCAN_PLUGIN",
 	MagicCookieValue: "vpt-scanner-plugin",
 }

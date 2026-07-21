@@ -12,8 +12,10 @@ Public runtime scanner plugins and the shared go-plugin gRPC SDK for VPT.
 
 ## Protocol
 
-The SDK protocol is version 2. The go-plugin handshake is `ProtocolVersion: 2`
-and `ScanPlugin.ExecuteStream` is the canonical scan operation: it delivers
+The SDK retains go-plugin handshake `ProtocolVersion: 1`: `ExecuteStream` is an
+additive gRPC method and therefore does not require a handshake bump. The
+next patch release for this rollout is `v0.2.1`. `ScanPlugin.ExecuteStream` is
+the canonical scan operation: it delivers
 structured, bounded progress events followed by one terminal result. Events
 contain a per-call sequence, level, type, safe message, string fields, and UTC
 timestamp; plugin stdout/stderr, credentials, parameters, and request/response

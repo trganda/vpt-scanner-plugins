@@ -19,6 +19,12 @@ type stubScanner struct {
 	gotToken  string
 }
 
+func TestHandshakeProtocolVersion(t *testing.T) {
+	if sdk.Handshake.ProtocolVersion != 1 {
+		t.Fatalf("handshake protocol = %d, want 1 for additive ExecuteStream rollout", sdk.Handshake.ProtocolVersion)
+	}
+}
+
 func (s *stubScanner) Capability(context.Context) (string, error) { return "portscan", nil }
 
 func (s *stubScanner) Prepare(_ context.Context, token string) error {
