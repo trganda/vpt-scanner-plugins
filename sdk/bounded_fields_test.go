@@ -1,20 +1,18 @@
 package sdk
 
-import "testing"
+import (
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
 
-func TestBoundedFieldsPreservesLine(t *testing.T) {
-	line := make([]byte, 300)
-	for i := range line {
-		line[i] = 'x'
-	}
-	got := boundedFields(map[string]string{
-		"line":    string(line),
-		"regular": string(line),
+var _ = Describe("boundedFields", func() {
+	It("preserves the line field", func() {
+		line := make([]byte, 300)
+		for i := range line {
+			line[i] = 'x'
+		}
+		got := boundedFields(map[string]string{"line": string(line), "regular": string(line)})
+		Expect(got["line"]).To(HaveLen(300))
+		Expect(got["regular"]).To(HaveLen(256))
 	})
-	if len(got["line"]) != 300 {
-		t.Fatalf("line length = %d, want 300", len(got["line"]))
-	}
-	if len(got["regular"]) != 256 {
-		t.Fatalf("regular length = %d, want 256", len(got["regular"]))
-	}
-}
+})

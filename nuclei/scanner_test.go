@@ -6,13 +6,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"testing"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"github.com/trganda/vpt-scanner-plugins/sdk"
 )
 
-// fakeEngine is a double for the engine port so Execute tests don't drag the
-// nuclei SDK in.
 type fakeEngine struct {
 	findings []Finding
 	err      error
@@ -24,144 +23,89 @@ func (f *fakeEngine) Scan(_ context.Context, target string, _ map[string]string)
 	return f.findings, f.err
 }
 
-func TestExecute_RawShape(t *testing.T) {
-	fake := &fakeEngine{findings: []Finding{
-		{TemplateID: "cve-2021-1234", Severity: "high", Host: "https://t", CVEIDs: []string{"CVE-2021-1234"}},
-	}}
-	s := newWithEngine(fake)
+var _ = Describe("scanner", func() {
+	It("returns the raw scan shape and emits events", func() {
+		fake := &fakeEngine{findings: []Finding{{TemplateID: "cve-2021-1234", Severity: "high", Host: "https://t", CVEIDs: []string{"CVE-2021-1234"}}}}
+		s := newWithEngine(fake)
+		var events []sdk.Event
+		res, err := s.ExecuteStream(context.Background(), sdk.Target{Host: "https://t"}, func(e sdk.Event) error { events = append(events, e); return nil })
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Capability).To(Equal(capability))
+		Expect(events).To(HaveLen(2))
+		Expect(events[0].Type).To(Equal("scan_started"))
+		Expect(events[1].Type).To(Equal("scan_completed"))
+		var raw map[string]any
+		Expect(json.Unmarshal(res.RawJSON, &raw)).To(Succeed())
+		Expect(raw["host"]).To(Equal("https://t"))
+		Expect(raw["count"]).To(Equal(float64(1)))
+		Expect(fake.gotHost).To(Equal("https://t"))
+	})
 
-	var events []sdk.Event
-	res, err := s.ExecuteStream(context.Background(), sdk.Target{Host: "https://t"}, func(e sdk.Event) error { events = append(events, e); return nil })
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if res.Capability != capability {
-		t.Fatalf("capability = %q", res.Capability)
-	}
-	if len(events) != 2 || events[0].Type != "scan_started" || events[1].Type != "scan_completed" {
-		t.Fatalf("events = %+v", events)
-	}
-	var raw map[string]any
-	if err := json.Unmarshal(res.RawJSON, &raw); err != nil {
-		t.Fatalf("raw_json invalid: %v", err)
-	}
-	if raw["host"] != "https://t" {
-		t.Fatalf("host = %v", raw["host"])
-	}
-	if raw["count"] != float64(1) {
-		t.Fatalf("count = %v, want 1", raw["count"])
-	}
-	if fake.gotHost != "https://t" {
-		t.Fatalf("engine saw host %q", fake.gotHost)
-	}
-}
+	It("returns engine errors", func() {
+		boom := errors.New("nuclei exploded")
+		_, err := newWithEngine(&fakeEngine{err: boom}).Execute(context.Background(), sdk.Target{Host: "https://t"})
+		Expect(errors.Is(err, boom)).To(BeTrue())
+	})
 
-func TestExecute_EngineError(t *testing.T) {
-	boom := errors.New("nuclei exploded")
-	s := newWithEngine(&fakeEngine{err: boom})
-	if _, err := s.Execute(context.Background(), sdk.Target{Host: "https://t"}); !errors.Is(err, boom) {
-		t.Fatalf("err = %v, want %v", err, boom)
-	}
-}
+	It("surfaces initialization errors from Execute and Prepare", func() {
+		s := &scanner{initErr: errors.New("template dir required")}
+		_, err := s.Execute(context.Background(), sdk.Target{Host: "https://t"})
+		Expect(err).To(HaveOccurred())
+		Expect(s.Prepare(context.Background(), "tok")).To(HaveOccurred())
+	})
 
-func TestExecute_InitError(t *testing.T) {
-	s := &scanner{initErr: errors.New("template dir required")}
-	if _, err := s.Execute(context.Background(), sdk.Target{Host: "https://t"}); err == nil {
-		t.Fatal("expected init error to surface from Execute")
-	}
-	if err := s.Prepare(context.Background(), "tok"); err == nil {
-		t.Fatal("expected init error to surface from Prepare")
-	}
-}
+	It("reports the vulnerability capability", func() {
+		c, err := (&scanner{}).Capability(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(c).To(Equal("vuln"))
+	})
 
-func TestCapability(t *testing.T) {
-	s := &scanner{}
-	if c, _ := s.Capability(context.Background()); c != "vuln" {
-		t.Fatalf("capability = %q", c)
-	}
-}
-
-// Prepare's template-sync path: assert the bundle fetch carries the node JWT
-// and that an empty token omits the header. Exercises the syncer/fetchBundle
-// directly (the on-disk Sync is covered by the cache write path).
-func TestFetchBundle_SetsAuthHeader(t *testing.T) {
-	var gotAuth string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
-		_ = json.NewEncoder(w).Encode(bundleResponse{Success: true, Data: []bundleEntry{}})
-	}))
-	defer srv.Close()
-
-	s := &syncer{bundleURL: srv.URL, httpClient: srv.Client()}
-	if _, err := s.fetchBundle(context.Background(), "template", "node-jwt"); err != nil {
-		t.Fatalf("fetchBundle: %v", err)
-	}
-	if gotAuth != "Bearer node-jwt" {
-		t.Fatalf("Authorization = %q, want Bearer node-jwt", gotAuth)
-	}
-}
-
-func TestFetchBundle_NoTokenOmitsHeader(t *testing.T) {
-	var gotAuth string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
-		_ = json.NewEncoder(w).Encode(bundleResponse{Success: true, Data: []bundleEntry{}})
-	}))
-	defer srv.Close()
-
-	s := &syncer{bundleURL: srv.URL, httpClient: srv.Client()}
-	if _, err := s.fetchBundle(context.Background(), "template", ""); err != nil {
-		t.Fatalf("fetchBundle: %v", err)
-	}
-	if gotAuth != "" {
-		t.Fatalf("Authorization = %q, want empty", gotAuth)
-	}
-}
-
-func TestFetchBundle_401Errors(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer srv.Close()
-
-	s := &syncer{bundleURL: srv.URL, httpClient: srv.Client()}
-	if _, err := s.fetchBundle(context.Background(), "template", "x"); err == nil {
-		t.Fatal("expected error on 401")
-	}
-}
-
-// Unwraps the response envelope's data array on success.
-func TestFetchBundle_ReturnsEnvelopeData(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(bundleResponse{
-			Success: true,
-			Data:    []bundleEntry{{ID: "tmpl-1", PresignedURL: "https://s3/tmpl-1"}},
+	Describe("fetchBundle", func() {
+		It("sets the authorization header from the node JWT", func() {
+			var gotAuth string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotAuth = r.Header.Get("Authorization")
+				_, _ = w.Write([]byte(`{"success":true,"data":[]}`))
+			}))
+			DeferCleanup(srv.Close)
+			_, err := (&syncer{bundleURL: srv.URL, httpClient: srv.Client()}).fetchBundle(context.Background(), "template", "node-jwt")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gotAuth).To(Equal("Bearer node-jwt"))
 		})
-	}))
-	defer srv.Close()
 
-	s := &syncer{bundleURL: srv.URL, httpClient: srv.Client()}
-	entries, err := s.fetchBundle(context.Background(), "template", "x")
-	if err != nil {
-		t.Fatalf("fetchBundle: %v", err)
-	}
-	if len(entries) != 1 || entries[0].ID != "tmpl-1" {
-		t.Fatalf("entries = %+v, want one entry tmpl-1", entries)
-	}
-}
-
-// A 200 envelope with success=false surfaces the error message.
-func TestFetchBundle_UnsuccessfulEnvelopeErrors(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(bundleResponse{
-			Success: false,
-			Error:   &bundleError{Code: "internal", Message: "boom"},
+		It("omits authorization when there is no token", func() {
+			var gotAuth string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotAuth = r.Header.Get("Authorization")
+				_, _ = w.Write([]byte(`{"success":true,"data":[]}`))
+			}))
+			DeferCleanup(srv.Close)
+			_, err := (&syncer{bundleURL: srv.URL, httpClient: srv.Client()}).fetchBundle(context.Background(), "template", "")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gotAuth).To(BeEmpty())
 		})
-	}))
-	defer srv.Close()
 
-	s := &syncer{bundleURL: srv.URL, httpClient: srv.Client()}
-	if _, err := s.fetchBundle(context.Background(), "template", "x"); err == nil {
-		t.Fatal("expected error on success=false envelope")
-	}
-}
+		It("errors on an unauthorized response", func() {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
+			DeferCleanup(srv.Close)
+			_, err := (&syncer{bundleURL: srv.URL, httpClient: srv.Client()}).fetchBundle(context.Background(), "template", "x")
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("returns the envelope data", func() {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"success":true,"data":[{"id":"tmpl-1","presigned_url":"https://s3/tmpl-1"}]}`)) }))
+			DeferCleanup(srv.Close)
+			entries, err := (&syncer{bundleURL: srv.URL, httpClient: srv.Client()}).fetchBundle(context.Background(), "template", "x")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(entries).To(HaveLen(1))
+			Expect(entries[0].ID).To(Equal("tmpl-1"))
+		})
+
+		It("errors on an unsuccessful envelope", func() {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"success":false,"error":{"code":"internal","message":"boom"}}`)) }))
+			DeferCleanup(srv.Close)
+			_, err := (&syncer{bundleURL: srv.URL, httpClient: srv.Client()}).fetchBundle(context.Background(), "template", "x")
+			Expect(err).To(HaveOccurred())
+		})
+	})
+})
