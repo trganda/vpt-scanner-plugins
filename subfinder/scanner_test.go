@@ -5,14 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"testing"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"github.com/trganda/vpt-scanner-plugins/sdk"
 )
 
-// fakeEnum is a double for the enumerator port so these tests don't drag the
-// subfinder SDK or live network into the unit suite.
 type fakeEnum struct {
 	findings []Finding
 	err      error
@@ -35,147 +34,110 @@ func (f *fakeEnum) Enumerate(ctx context.Context, domain string, stdout, stderr 
 	return f.findings, f.err
 }
 
-func TestExecute_CapturesFragmentedStreamsInOrder(t *testing.T) {
-	fake := &fakeEnum{write: func(stdout, stderr io.Writer) {
-		_, _ = stdout.Write([]byte("out-"))
-		_, _ = stderr.Write([]byte("err-"))
-		_, _ = stdout.Write([]byte("one\nout-two\n"))
-		_, _ = stderr.Write([]byte("one\nerr-two"))
-	}}
-	var events []sdk.Event
-	_, err := newWithEnumerator(fake, 0).ExecuteStream(context.Background(), sdk.Target{Host: "example.com"}, func(e sdk.Event) error {
-		events = append(events, e)
-		return nil
+var _ = Describe("scanner", func() {
+	It("captures fragmented streams in order", func() {
+		fake := &fakeEnum{write: func(stdout, stderr io.Writer) {
+			_, _ = stdout.Write([]byte("out-"))
+			_, _ = stderr.Write([]byte("err-"))
+			_, _ = stdout.Write([]byte("one\nout-two\n"))
+			_, _ = stderr.Write([]byte("one\nerr-two"))
+		}}
+		var events []sdk.Event
+		_, err := newWithEnumerator(fake, 0).ExecuteStream(context.Background(), sdk.Target{Host: "example.com"}, func(e sdk.Event) error {
+			events = append(events, e)
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(events).To(HaveLen(6))
+		want := []struct{ typ, level, line, stream string }{
+			{"scan_started", "info", "", ""},
+			{"log", "info", "out-one", "stdout"},
+			{"log", "info", "out-two", "stdout"},
+			{"log", "info", "err-one", "stderr"},
+			{"log", "info", "err-two", "stderr"},
+			{"scan_completed", "info", "", ""},
+		}
+		for i, expected := range want {
+			Expect(events[i].Type).To(Equal(expected.typ))
+			Expect(events[i].Level).To(Equal(expected.level))
+			Expect(events[i].Fields["line"]).To(Equal(expected.line))
+			Expect(events[i].Fields["stream"]).To(Equal(expected.stream))
+			Expect(events[i].Sequence).To(Equal(int64(i + 1)))
+		}
 	})
-	if err != nil {
-		t.Fatalf("ExecuteStream: %v", err)
-	}
-	if len(events) != 6 {
-		t.Fatalf("events = %+v, want start, four logs, completed", events)
-	}
-	want := []struct{ typ, level, line, stream string }{
-		{"scan_started", "info", "", ""},
-		{"log", "info", "out-one", "stdout"},
-		{"log", "info", "out-two", "stdout"},
-		{"log", "info", "err-one", "stderr"},
-		{"log", "info", "err-two", "stderr"},
-		{"scan_completed", "info", "", ""},
-	}
-	for i, want := range want {
-		if events[i].Type != want.typ || events[i].Level != want.level || events[i].Fields["line"] != want.line || events[i].Fields["stream"] != want.stream {
-			t.Fatalf("event %d = %+v, want %+v", i, events[i], want)
-		}
-		if events[i].Sequence != int64(i+1) {
-			t.Fatalf("event %d sequence = %d, want %d", i, events[i].Sequence, i+1)
-		}
-	}
-}
 
-func decodeRaw(t *testing.T, r sdk.Result) map[string]any {
-	t.Helper()
+	It("aggregates findings", func() {
+		fake := &fakeEnum{findings: []Finding{
+			{Host: "api.example.com", Source: "crtsh"},
+			{Host: "www.example.com", Source: "crtsh"},
+			{Host: "mail.example.com", Source: "hackertarget"},
+		}}
+		var events []sdk.Event
+		res, err := newWithEnumerator(fake, 0).ExecuteStream(context.Background(), sdk.Target{Host: "example.com"}, func(e sdk.Event) error { events = append(events, e); return nil })
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Capability).To(Equal(capability))
+		Expect(events).To(HaveLen(2))
+		Expect(events[0].Type).To(Equal("scan_started"))
+		Expect(events[1].Type).To(Equal("scan_completed"))
+		raw := decodeRaw(res)
+		Expect(raw["domain"]).To(Equal("example.com"))
+		Expect(raw["count"]).To(Equal(float64(3)))
+		subs, ok := raw["subdomains"].([]any)
+		Expect(ok).To(BeTrue())
+		Expect(subs).To(HaveLen(3))
+		bySrc, ok := raw["by_source"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		crtsh, ok := bySrc["crtsh"].([]any)
+		Expect(ok).To(BeTrue())
+		Expect(crtsh).To(HaveLen(2))
+		Expect(fake.gotHost).To(Equal("example.com"))
+	})
+
+	It("trims the host", func() {
+		fake := &fakeEnum{findings: []Finding{{Host: "a.example.com", Source: "crtsh"}}}
+		_, err := newWithEnumerator(fake, 0).Execute(context.Background(), sdk.Target{Host: "  example.com  "})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.gotHost).To(Equal("example.com"))
+	})
+
+	It("rejects an empty host", func() {
+		fake := &fakeEnum{}
+		_, err := newWithEnumerator(fake, 0).Execute(context.Background(), sdk.Target{Host: "   "})
+		Expect(err).To(HaveOccurred())
+		Expect(fake.calls).To(Equal(0))
+	})
+
+	It("returns enumerator errors", func() {
+		boom := errors.New("source rate-limited")
+		fake := &fakeEnum{err: boom}
+		_, err := newWithEnumerator(fake, 0).Execute(context.Background(), sdk.Target{Host: "example.com"})
+		Expect(err).To(MatchError(boom))
+	})
+
+	It("honours the per-call timeout", func() {
+		fake := &fakeEnum{block: true}
+		start := time.Now()
+		_, err := newWithEnumerator(fake, 20*time.Millisecond).Execute(context.Background(), sdk.Target{Host: "example.com"})
+		Expect(err).To(HaveOccurred())
+		Expect(time.Since(start)).To(BeNumerically("<", time.Second))
+	})
+
+	It("surfaces initialization errors", func() {
+		_, err := (&scanner{initErr: errors.New("bad provider config")}).Execute(context.Background(), sdk.Target{Host: "example.com"})
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("reports its capability and prepares successfully", func() {
+		s := &scanner{}
+		c, err := s.Capability(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(c).To(Equal("subdomain"))
+		Expect(s.Prepare(context.Background(), "tok")).To(Succeed())
+	})
+})
+
+func decodeRaw(r sdk.Result) map[string]any {
 	var m map[string]any
-	if err := json.Unmarshal(r.RawJSON, &m); err != nil {
-		t.Fatalf("raw_json invalid: %v", err)
-	}
+	Expect(json.Unmarshal(r.RawJSON, &m)).To(Succeed())
 	return m
-}
-
-func TestExecute_Aggregates(t *testing.T) {
-	fake := &fakeEnum{findings: []Finding{
-		{Host: "api.example.com", Source: "crtsh"},
-		{Host: "www.example.com", Source: "crtsh"},
-		{Host: "mail.example.com", Source: "hackertarget"},
-	}}
-	s := newWithEnumerator(fake, 0)
-
-	var events []sdk.Event
-	res, err := s.ExecuteStream(context.Background(), sdk.Target{Host: "example.com"}, func(e sdk.Event) error { events = append(events, e); return nil })
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if res.Capability != capability {
-		t.Fatalf("capability = %q", res.Capability)
-	}
-	if len(events) != 2 || events[0].Type != "scan_started" || events[1].Type != "scan_completed" {
-		t.Fatalf("events = %+v", events)
-	}
-	raw := decodeRaw(t, res)
-	if raw["domain"] != "example.com" {
-		t.Fatalf("domain = %v", raw["domain"])
-	}
-	if raw["count"] != float64(3) {
-		t.Fatalf("count = %v, want 3", raw["count"])
-	}
-	subs, _ := raw["subdomains"].([]any)
-	if len(subs) != 3 {
-		t.Fatalf("subdomains len = %d, want 3", len(subs))
-	}
-	bySrc, _ := raw["by_source"].(map[string]any)
-	crtsh, _ := bySrc["crtsh"].([]any)
-	if len(crtsh) != 2 {
-		t.Fatalf("by_source[crtsh] len = %d, want 2", len(crtsh))
-	}
-	if fake.gotHost != "example.com" {
-		t.Fatalf("enumerator saw host %q", fake.gotHost)
-	}
-}
-
-func TestExecute_TrimsHost(t *testing.T) {
-	fake := &fakeEnum{findings: []Finding{{Host: "a.example.com", Source: "crtsh"}}}
-	s := newWithEnumerator(fake, 0)
-	if _, err := s.Execute(context.Background(), sdk.Target{Host: "  example.com  "}); err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if fake.gotHost != "example.com" {
-		t.Fatalf("host not trimmed: %q", fake.gotHost)
-	}
-}
-
-func TestExecute_EmptyHost(t *testing.T) {
-	fake := &fakeEnum{}
-	s := newWithEnumerator(fake, 0)
-	if _, err := s.Execute(context.Background(), sdk.Target{Host: "   "}); err == nil {
-		t.Fatal("expected error for empty host")
-	}
-	if fake.calls != 0 {
-		t.Fatalf("enumerator called %d times; want 0", fake.calls)
-	}
-}
-
-func TestExecute_EnumeratorError(t *testing.T) {
-	boom := errors.New("source rate-limited")
-	fake := &fakeEnum{err: boom}
-	s := newWithEnumerator(fake, 0)
-	if _, err := s.Execute(context.Background(), sdk.Target{Host: "example.com"}); !errors.Is(err, boom) {
-		t.Fatalf("err = %v, want %v", err, boom)
-	}
-}
-
-func TestExecute_PerCallTimeout(t *testing.T) {
-	fake := &fakeEnum{block: true}
-	s := newWithEnumerator(fake, 20*time.Millisecond)
-	start := time.Now()
-	if _, err := s.Execute(context.Background(), sdk.Target{Host: "example.com"}); err == nil {
-		t.Fatal("expected timeout error")
-	}
-	if time.Since(start) > time.Second {
-		t.Fatalf("timeout not honoured; took %s", time.Since(start))
-	}
-}
-
-func TestExecute_InitError(t *testing.T) {
-	s := &scanner{initErr: errors.New("bad provider config")}
-	if _, err := s.Execute(context.Background(), sdk.Target{Host: "example.com"}); err == nil {
-		t.Fatal("expected init error to surface from Execute")
-	}
-}
-
-func TestCapabilityAndPrepare(t *testing.T) {
-	s := &scanner{}
-	if c, _ := s.Capability(context.Background()); c != "subdomain" {
-		t.Fatalf("capability = %q", c)
-	}
-	if err := s.Prepare(context.Background(), "tok"); err != nil {
-		t.Fatalf("Prepare should be a no-op: %v", err)
-	}
 }

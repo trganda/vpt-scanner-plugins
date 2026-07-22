@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"testing"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"github.com/trganda/vpt-scanner-plugins/sdk"
 )
 
@@ -32,117 +33,87 @@ func (f *fakeProber) Probe(ctx context.Context, host, ports string) ([]ProbeResu
 	return f.probes, f.err
 }
 
-func decodeRaw(t *testing.T, r sdk.Result) map[string]any {
-	t.Helper()
+func decodeRaw(r sdk.Result) map[string]any {
 	var m map[string]any
-	if err := json.Unmarshal(r.RawJSON, &m); err != nil {
-		t.Fatalf("raw_json invalid: %v", err)
-	}
+	Expect(json.Unmarshal(r.RawJSON, &m)).NotTo(HaveOccurred())
 	return m
 }
 
-func TestExecute_RawShape(t *testing.T) {
-	fake := &fakeProber{probes: []ProbeResult{
-		{URL: "https://example.com", Scheme: "https", StatusCode: 200, WebServer: "nginx"},
-	}}
-	s := newWithProber(fake, 0)
+var _ = Describe("scanner", func() {
+	It("preserves the raw result shape", func() {
+		fake := &fakeProber{probes: []ProbeResult{
+			{URL: "https://example.com", Scheme: "https", StatusCode: 200, WebServer: "nginx"},
+		}}
+		s := newWithProber(fake, 0)
 
-	var events []sdk.Event
-	res, err := s.ExecuteStream(context.Background(), sdk.Target{Host: "example.com"}, func(e sdk.Event) error { events = append(events, e); return nil })
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if res.Capability != capability {
-		t.Fatalf("capability = %q", res.Capability)
-	}
-	if len(events) != 2 || events[0].Type != "scan_started" || events[1].Type != "scan_completed" {
-		t.Fatalf("events = %+v", events)
-	}
-	raw := decodeRaw(t, res)
-	if raw["host"] != "example.com" {
-		t.Fatalf("host = %v", raw["host"])
-	}
-	if raw["count"] != float64(1) {
-		t.Fatalf("count = %v, want 1", raw["count"])
-	}
-	probes, _ := raw["probes"].([]any)
-	if len(probes) != 1 {
-		t.Fatalf("probes len = %d, want 1", len(probes))
-	}
-	first, _ := probes[0].(map[string]any)
-	if first["url"] != "https://example.com" || first["web_server"] != "nginx" {
-		t.Fatalf("probe fields not preserved: %v", first)
-	}
-}
+		var events []sdk.Event
+		res, err := s.ExecuteStream(context.Background(), sdk.Target{Host: "example.com"}, func(e sdk.Event) error { events = append(events, e); return nil })
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Capability).To(Equal(capability))
+		Expect(events).To(HaveLen(2))
+		Expect(events[0].Type).To(Equal("scan_started"))
+		Expect(events[1].Type).To(Equal("scan_completed"))
+		raw := decodeRaw(res)
+		Expect(raw["host"]).To(Equal("example.com"))
+		Expect(raw["count"]).To(Equal(float64(1)))
+		probes, _ := raw["probes"].([]any)
+		Expect(probes).To(HaveLen(1))
+		first, _ := probes[0].(map[string]any)
+		Expect(first).To(HaveKeyWithValue("url", "https://example.com"))
+		Expect(first).To(HaveKeyWithValue("web_server", "nginx"))
+	})
 
-func TestExecute_DefaultAndParamPorts(t *testing.T) {
-	fake := &fakeProber{}
-	s := newWithProber(fake, 0)
-	if _, err := s.Execute(context.Background(), sdk.Target{Host: "example.com"}); err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if fake.gotPorts != "80,443" {
-		t.Fatalf("default ports = %q, want 80,443", fake.gotPorts)
-	}
+	It("uses default and parameterized ports", func() {
+		fake := &fakeProber{}
+		s := newWithProber(fake, 0)
+		_, err := s.Execute(context.Background(), sdk.Target{Host: "example.com"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.gotPorts).To(Equal("80,443"))
 
-	fake2 := &fakeProber{}
-	s2 := newWithProber(fake2, 0)
-	if _, err := s2.Execute(context.Background(), sdk.Target{Host: "  example.com  ", Params: map[string]string{"ports": "8080,8443"}}); err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if fake2.gotHost != "example.com" {
-		t.Fatalf("host not trimmed: %q", fake2.gotHost)
-	}
-	if fake2.gotPorts != "8080,8443" {
-		t.Fatalf("ports param not passed: %q", fake2.gotPorts)
-	}
-}
+		fake2 := &fakeProber{}
+		s2 := newWithProber(fake2, 0)
+		_, err = s2.Execute(context.Background(), sdk.Target{Host: "  example.com  ", Params: map[string]string{"ports": "8080,8443"}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake2.gotHost).To(Equal("example.com"))
+		Expect(fake2.gotPorts).To(Equal("8080,8443"))
+	})
 
-func TestExecute_EmptyHost(t *testing.T) {
-	fake := &fakeProber{}
-	s := newWithProber(fake, 0)
-	if _, err := s.Execute(context.Background(), sdk.Target{Host: "   "}); err == nil {
-		t.Fatal("expected error for empty host")
-	}
-	if fake.calls != 0 {
-		t.Fatalf("prober called %d times; want 0", fake.calls)
-	}
-}
+	It("rejects an empty host without probing", func() {
+		fake := &fakeProber{}
+		s := newWithProber(fake, 0)
+		_, err := s.Execute(context.Background(), sdk.Target{Host: "   "})
+		Expect(err).To(MatchError("httpprobe: empty target host"))
+		Expect(fake.calls).To(Equal(0))
+	})
 
-func TestExecute_ProberError(t *testing.T) {
-	boom := errors.New("dial timeout")
-	fake := &fakeProber{err: boom}
-	s := newWithProber(fake, 0)
-	if _, err := s.Execute(context.Background(), sdk.Target{Host: "example.com"}); !errors.Is(err, boom) {
-		t.Fatalf("err = %v, want %v", err, boom)
-	}
-}
+	It("returns prober errors", func() {
+		boom := errors.New("dial timeout")
+		fake := &fakeProber{err: boom}
+		s := newWithProber(fake, 0)
+		_, err := s.Execute(context.Background(), sdk.Target{Host: "example.com"})
+		Expect(err).To(MatchError(boom))
+	})
 
-func TestExecute_PerCallTimeout(t *testing.T) {
-	fake := &fakeProber{block: true}
-	s := newWithProber(fake, 20*time.Millisecond)
-	start := time.Now()
-	if _, err := s.Execute(context.Background(), sdk.Target{Host: "example.com"}); err == nil {
-		t.Fatal("expected timeout error")
-	}
-	if time.Since(start) > time.Second {
-		t.Fatalf("timeout not honoured; took %s", time.Since(start))
-	}
-}
+	It("honors the per-call timeout", func() {
+		fake := &fakeProber{block: true}
+		s := newWithProber(fake, 20*time.Millisecond)
+		start := time.Now()
+		_, err := s.Execute(context.Background(), sdk.Target{Host: "example.com"})
+		Expect(err).To(HaveOccurred())
+		Expect(time.Since(start)).To(BeNumerically("<", time.Second))
+	})
 
-func TestExecute_InitError(t *testing.T) {
-	s := &scanner{initErr: errors.New("bad options")}
-	if _, err := s.Execute(context.Background(), sdk.Target{Host: "example.com"}); err == nil {
-		t.Fatal("expected init error to surface from Execute")
-	}
-}
+	It("surfaces initialization errors", func() {
+		s := &scanner{initErr: errors.New("bad options")}
+		_, err := s.Execute(context.Background(), sdk.Target{Host: "example.com"})
+		Expect(err).To(MatchError("bad options"))
+	})
 
-func TestCapabilityAndPrepare(t *testing.T) {
-	s := &scanner{}
-	if c, _ := s.Capability(context.Background()); c != "httpprobe" {
-		t.Fatalf("capability = %q", c)
-	}
-	if err := s.Prepare(context.Background(), "tok"); err != nil {
-		t.Fatalf("Prepare should be a no-op: %v", err)
-	}
-}
+	It("reports its capability and has a no-op prepare", func() {
+		s := &scanner{}
+		c, err := s.Capability(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(c).To(Equal("httpprobe"))
+		Expect(s.Prepare(context.Background(), "tok")).To(Succeed())
+	})
+})
