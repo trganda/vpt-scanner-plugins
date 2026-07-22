@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/projectdiscovery/gologger/levels"
 	"github.com/trganda/vpt-scanner-plugins/sdk"
 )
 
@@ -79,7 +80,19 @@ func (s *scanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.Even
 		defer cancel()
 	}
 
-	findings, err := s.enum.Enumerate(ctx, domain)
+	stdout := &lineWriter{emit: func(line string) error {
+		return emit("info", "log", line, map[string]string{"stream": "stdout", "line": line})
+	}}
+	stderr := &lineWriter{level: "info", emitLevel: func(line, level string) error {
+		return emit(level, "log", line, map[string]string{"stream": "stderr", "line": line})
+	}}
+	findings, err := s.enum.Enumerate(ctx, domain, stdout, stderr)
+	if flushErr := stdout.Flush(); err == nil {
+		err = flushErr
+	}
+	if flushErr := stderr.Flush(); err == nil {
+		err = flushErr
+	}
 	if err != nil {
 		_ = emit("error", "scan_failed", "subdomain scan failed", map[string]string{"reason": "scanner_error"})
 		return sdk.Result{}, err
@@ -110,6 +123,73 @@ func (s *scanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.Even
 		StartedAtUnixNano:  start.UnixNano(),
 		FinishedAtUnixNano: time.Now().UnixNano(),
 	}, nil
+}
+
+// lineWriter emits complete lines without bufio.Scanner's token limit.
+type lineWriter struct {
+	buf       strings.Builder
+	level     string
+	emit      func(string) error
+	emitLevel func(string, string) error
+}
+
+func (w *lineWriter) Write(p []byte) (int, error) {
+	return w.write(p, w.level)
+}
+
+func (w *lineWriter) WriteLevel(p []byte, level levels.Level) (int, error) {
+	w.level = gologgerLevel(level)
+	return w.write(p, gologgerLevel(level))
+}
+
+func (w *lineWriter) write(p []byte, level string) (int, error) {
+	original := len(p)
+	for len(p) > 0 {
+		i := strings.IndexByte(string(p), '\n')
+		if i < 0 {
+			w.buf.WriteString(string(p))
+			break
+		}
+		w.buf.WriteString(string(p[:i]))
+		if err := w.emitLine(w.buf.String(), level); err != nil {
+			return 0, err
+		}
+		w.buf.Reset()
+		p = p[i+1:]
+	}
+	return original, nil
+}
+func (w *lineWriter) Flush() error {
+	if w.buf.Len() == 0 {
+		return nil
+	}
+	err := w.emitLine(w.buf.String(), w.level)
+	w.buf.Reset()
+	return err
+}
+
+func (w *lineWriter) emitLine(line, level string) error {
+	if w.emitLevel != nil {
+		return w.emitLevel(line, level)
+	}
+	return w.emit(line)
+}
+
+func gologgerLevel(level levels.Level) string {
+	switch level {
+	case levels.LevelFatal:
+		return "fatal"
+	case levels.LevelError:
+		return "error"
+	case levels.LevelWarning:
+		return "warning"
+	case levels.LevelDebug:
+		return "debug"
+	case levels.LevelVerbose:
+		return "verbose"
+	default:
+		return "info"
+	}
 }
 
 var _ sdk.Scanner = (*scanner)(nil)

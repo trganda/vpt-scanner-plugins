@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -18,16 +19,56 @@ type fakeEnum struct {
 	calls    int
 	gotHost  string
 	block    bool
+	write    func(io.Writer, io.Writer)
 }
 
-func (f *fakeEnum) Enumerate(ctx context.Context, domain string) ([]Finding, error) {
+func (f *fakeEnum) Enumerate(ctx context.Context, domain string, stdout, stderr io.Writer) ([]Finding, error) {
 	f.calls++
 	f.gotHost = domain
 	if f.block {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
+	if f.write != nil {
+		f.write(stdout, stderr)
+	}
 	return f.findings, f.err
+}
+
+func TestExecute_CapturesFragmentedStreamsInOrder(t *testing.T) {
+	fake := &fakeEnum{write: func(stdout, stderr io.Writer) {
+		_, _ = stdout.Write([]byte("out-"))
+		_, _ = stderr.Write([]byte("err-"))
+		_, _ = stdout.Write([]byte("one\nout-two\n"))
+		_, _ = stderr.Write([]byte("one\nerr-two"))
+	}}
+	var events []sdk.Event
+	_, err := newWithEnumerator(fake, 0).ExecuteStream(context.Background(), sdk.Target{Host: "example.com"}, func(e sdk.Event) error {
+		events = append(events, e)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ExecuteStream: %v", err)
+	}
+	if len(events) != 6 {
+		t.Fatalf("events = %+v, want start, four logs, completed", events)
+	}
+	want := []struct{ typ, level, line, stream string }{
+		{"scan_started", "info", "", ""},
+		{"log", "info", "out-one", "stdout"},
+		{"log", "info", "out-two", "stdout"},
+		{"log", "info", "err-one", "stderr"},
+		{"log", "info", "err-two", "stderr"},
+		{"scan_completed", "info", "", ""},
+	}
+	for i, want := range want {
+		if events[i].Type != want.typ || events[i].Level != want.level || events[i].Fields["line"] != want.line || events[i].Fields["stream"] != want.stream {
+			t.Fatalf("event %d = %+v, want %+v", i, events[i], want)
+		}
+		if events[i].Sequence != int64(i+1) {
+			t.Fatalf("event %d sequence = %d, want %d", i, events[i].Sequence, i+1)
+		}
+	}
 }
 
 func decodeRaw(t *testing.T, r sdk.Result) map[string]any {
