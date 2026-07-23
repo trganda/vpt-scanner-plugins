@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/gologger/levels"
+	"github.com/projectdiscovery/gologger/writer"
 	"github.com/projectdiscovery/subfinder/v2/pkg/runner"
 )
 
@@ -23,7 +25,7 @@ type Finding struct {
 // enumerator is the port the scanner depends on. The subfinder-backed
 // implementation lives below; tests inject a fake.
 type enumerator interface {
-	Enumerate(ctx context.Context, domain string) ([]Finding, error)
+	Enumerate(ctx context.Context, domain string, stdout, stderr io.Writer) ([]Finding, error)
 }
 
 // subfinderEnumerator wraps subfinder's runner so the scanner depends only on
@@ -37,11 +39,6 @@ type subfinderEnumerator struct {
 // runner.ParseOptions) to avoid version-check HTTP calls, banner output, and
 // os.Exit on bad flags — none of which belong inside a library boot path.
 func newSubfinderEnumerator(cfg config) (*subfinderEnumerator, error) {
-	// Silence gologger before constructing the runner so subfinder's NewRunner
-	// (which calls ConfigureOutput) doesn't spam stderr. In a plugin this also
-	// keeps stdout clean — go-plugin uses it for the handshake.
-	gologger.DefaultLogger.SetMaxLevel(levels.LevelSilent)
-
 	rOpts := &runner.Options{
 		Threads:            cfg.Threads,
 		Timeout:            int(cfg.Timeout / time.Second),
@@ -67,9 +64,41 @@ func newSubfinderEnumerator(cfg config) (*subfinderEnumerator, error) {
 // Enumerate runs a single passive enumeration pass against domain. It uses
 // EnumerateSingleDomainWithCtx so subfinder honours ctx cancellation and we
 // stay off the higher-level RunEnumeration path.
-func (s *subfinderEnumerator) Enumerate(ctx context.Context, domain string) ([]Finding, error) {
+var gologgerMu sync.Mutex
+
+// gologgerWriter adapts an io.Writer to gologger's level-aware writer API.
+// The level-aware path lets scanner log events retain the level assigned by
+// gologger while ordinary enumerator output remains an io.Writer stream.
+type gologgerWriter struct{ dst io.Writer }
+
+func (w *gologgerWriter) Write(data []byte, level levels.Level) {
+	if dst, ok := w.dst.(interface {
+		WriteLevel([]byte, levels.Level) (int, error)
+	}); ok {
+		_, _ = dst.WriteLevel(data, level)
+		return
+	}
+	_, _ = w.dst.Write(data)
+}
+
+func (s *subfinderEnumerator) Enumerate(ctx context.Context, domain string, stdout, stderr io.Writer) ([]Finding, error) {
 	var buf bytes.Buffer
-	sourceMap, err := s.runner.EnumerateSingleDomainWithCtx(ctx, domain, []io.Writer{&buf})
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	gologgerMu.Lock()
+	gologger.DefaultLogger.SetWriter(&gologgerWriter{dst: stderr})
+	defer func() {
+		// Logger exposes no getter for its current writer. NewCLI is the
+		// lifecycle-safe API writer used by the default logger, rather than
+		// passing os.Stderr (which is not a gologger writer).
+		gologger.DefaultLogger.SetWriter(writer.NewCLI())
+		gologgerMu.Unlock()
+	}()
+	sourceMap, err := s.runner.EnumerateSingleDomainWithCtx(ctx, domain, []io.Writer{io.MultiWriter(&buf, stdout)})
 	if err != nil {
 		return nil, fmt.Errorf("subdomain: subfinder enumerate %q: %w", domain, err)
 	}
