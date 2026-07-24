@@ -20,6 +20,7 @@ type fakeProber struct {
 	gotHost  string
 	gotPorts string
 	block    bool
+	started  chan struct{}
 }
 
 func (f *fakeProber) Probe(ctx context.Context, host, ports string) ([]ProbeResult, error) {
@@ -27,6 +28,9 @@ func (f *fakeProber) Probe(ctx context.Context, host, ports string) ([]ProbeResu
 	f.gotHost = host
 	f.gotPorts = ports
 	if f.block {
+		if f.started != nil {
+			close(f.started)
+		}
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
@@ -101,6 +105,16 @@ var _ = Describe("scanner", func() {
 		_, err := s.Execute(context.Background(), sdk.Target{Host: "example.com"})
 		Expect(err).To(HaveOccurred())
 		Expect(time.Since(start)).To(BeNumerically("<", time.Second))
+	})
+
+	It("propagates caller cancellation to the prober", func() {
+		fake := &fakeProber{block: true, started: make(chan struct{})}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { _, err := newWithProber(fake, 0).Execute(ctx, sdk.Target{Host: "example.com"}); done <- err }()
+		Eventually(fake.started).Should(BeClosed())
+		cancel()
+		Eventually(done).Should(Receive(MatchError(context.Canceled)))
 	})
 
 	It("surfaces initialization errors", func() {

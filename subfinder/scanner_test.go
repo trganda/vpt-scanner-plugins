@@ -19,12 +19,16 @@ type fakeEnum struct {
 	gotHost  string
 	block    bool
 	write    func(io.Writer, io.Writer)
+	started  chan struct{}
 }
 
 func (f *fakeEnum) Enumerate(ctx context.Context, domain string, stdout, stderr io.Writer) ([]Finding, error) {
 	f.calls++
 	f.gotHost = domain
 	if f.block {
+		if f.started != nil {
+			close(f.started)
+		}
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
@@ -120,6 +124,19 @@ var _ = Describe("scanner", func() {
 		_, err := newWithEnumerator(fake, 20*time.Millisecond).Execute(context.Background(), sdk.Target{Host: "example.com"})
 		Expect(err).To(HaveOccurred())
 		Expect(time.Since(start)).To(BeNumerically("<", time.Second))
+	})
+
+	It("propagates caller cancellation to the enumerator", func() {
+		fake := &fakeEnum{block: true, started: make(chan struct{})}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			_, err := newWithEnumerator(fake, 0).Execute(ctx, sdk.Target{Host: "example.com"})
+			done <- err
+		}()
+		Eventually(fake.started).Should(BeClosed())
+		cancel()
+		Eventually(done).Should(Receive(MatchError(context.Canceled)))
 	})
 
 	It("surfaces initialization errors", func() {

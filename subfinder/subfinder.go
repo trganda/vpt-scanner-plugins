@@ -31,7 +31,15 @@ type enumerator interface {
 // subfinderEnumerator wraps subfinder's runner so the scanner depends only on
 // the enumerator port and not on the SDK directly.
 type subfinderEnumerator struct {
-	runner *runner.Runner
+	runner subfinderRunner
+}
+
+type subfinderRunner interface {
+	EnumerateSingleDomainWithCtx(context.Context, string, []io.Writer) (map[string]map[string]struct{}, error)
+}
+
+var newSubfinderRunner = func(opts *runner.Options) (subfinderRunner, error) {
+	return runner.NewRunner(opts)
 }
 
 // newSubfinderEnumerator constructs the underlying subfinder runner. We
@@ -54,7 +62,7 @@ func newSubfinderEnumerator(cfg config) (*subfinderEnumerator, error) {
 		DisableUpdateCheck: true,
 	}
 
-	r, err := runner.NewRunner(rOpts)
+	r, err := newSubfinderRunner(rOpts)
 	if err != nil {
 		return nil, fmt.Errorf("subdomain: build subfinder runner: %w", err)
 	}

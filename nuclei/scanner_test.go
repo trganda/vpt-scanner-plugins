@@ -16,10 +16,19 @@ type fakeEngine struct {
 	findings []Finding
 	err      error
 	gotHost  string
+	block    bool
+	started  chan struct{}
 }
 
-func (f *fakeEngine) Scan(_ context.Context, target string, _ map[string]string) ([]Finding, error) {
+func (f *fakeEngine) Scan(ctx context.Context, target string, _ map[string]string) ([]Finding, error) {
 	f.gotHost = target
+	if f.block {
+		if f.started != nil {
+			close(f.started)
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	return f.findings, f.err
 }
 
@@ -45,6 +54,16 @@ var _ = Describe("scanner", func() {
 		boom := errors.New("nuclei exploded")
 		_, err := newWithEngine(&fakeEngine{err: boom}).Execute(context.Background(), sdk.Target{Host: "https://t"})
 		Expect(errors.Is(err, boom)).To(BeTrue())
+	})
+
+	It("propagates caller cancellation to the engine", func() {
+		fake := &fakeEngine{block: true, started: make(chan struct{})}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { _, err := newWithEngine(fake).Execute(ctx, sdk.Target{Host: "https://t"}); done <- err }()
+		Eventually(fake.started).Should(BeClosed())
+		cancel()
+		Eventually(done).Should(Receive(MatchError(context.Canceled)))
 	})
 
 	It("surfaces initialization errors from Execute and Prepare", func() {
@@ -93,7 +112,9 @@ var _ = Describe("scanner", func() {
 		})
 
 		It("returns the envelope data", func() {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"success":true,"data":[{"id":"tmpl-1","presigned_url":"https://s3/tmpl-1"}]}`)) }))
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"success":true,"data":[{"id":"tmpl-1","presigned_url":"https://s3/tmpl-1"}]}`))
+			}))
 			DeferCleanup(srv.Close)
 			entries, err := (&syncer{bundleURL: srv.URL, httpClient: srv.Client()}).fetchBundle(context.Background(), "template", "x")
 			Expect(err).NotTo(HaveOccurred())
@@ -102,7 +123,9 @@ var _ = Describe("scanner", func() {
 		})
 
 		It("errors on an unsuccessful envelope", func() {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"success":false,"error":{"code":"internal","message":"boom"}}`)) }))
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"success":false,"error":{"code":"internal","message":"boom"}}`))
+			}))
 			DeferCleanup(srv.Close)
 			_, err := (&syncer{bundleURL: srv.URL, httpClient: srv.Client()}).fetchBundle(context.Background(), "template", "x")
 			Expect(err).To(HaveOccurred())

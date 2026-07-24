@@ -24,6 +24,16 @@ type nucleiEngine struct {
 	cfg config
 }
 
+type nucleiRunner interface {
+	LoadTargets([]string, bool)
+	ExecuteCallbackWithCtx(context.Context, ...func(*output.ResultEvent)) error
+	Close()
+}
+
+var newNucleiRunner = func(ctx context.Context, opts ...nuclei.NucleiSDKOptions) (nucleiRunner, error) {
+	return nuclei.NewNucleiEngineCtx(ctx, opts...)
+}
+
 func newNucleiEngine(cfg config) (*nucleiEngine, error) {
 	if cfg.TemplateDir == "" {
 		return nil, fmt.Errorf("vuln: VPT_NODE_NUCLEI_TEMPLATE_DIR is required")
@@ -36,7 +46,7 @@ func (n *nucleiEngine) Scan(ctx context.Context, target string, params map[strin
 	templateDir := filepath.Join(n.cfg.TemplateDir, "templates")
 	workflowDir := filepath.Join(n.cfg.TemplateDir, "workflows")
 
-	ne, err := nuclei.NewNucleiEngineCtx(ctx,
+	ne, err := newNucleiRunner(ctx,
 		nuclei.WithTemplatesOrWorkflows(nuclei.TemplateSources{
 			Templates: []string{templateDir},
 			Workflows: []string{workflowDir},

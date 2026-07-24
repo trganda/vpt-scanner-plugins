@@ -20,6 +20,7 @@ type fakeScanner struct {
 	gotHost  string
 	gotPorts string
 	block    bool
+	started  chan struct{}
 }
 
 func (f *fakeScanner) Scan(ctx context.Context, host, ports string) ([]PortResult, error) {
@@ -27,6 +28,9 @@ func (f *fakeScanner) Scan(ctx context.Context, host, ports string) ([]PortResul
 	f.gotHost = host
 	f.gotPorts = ports
 	if f.block {
+		if f.started != nil {
+			close(f.started)
+		}
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
@@ -97,6 +101,16 @@ var _ = Describe("portscan scanner", func() {
 		_, err := s.Execute(context.Background(), sdk.Target{Host: "example.com"})
 		Expect(err).To(HaveOccurred())
 		Expect(time.Since(start)).To(BeNumerically("<", time.Second))
+	})
+
+	It("propagates caller cancellation to the scanner", func() {
+		fake := &fakeScanner{block: true, started: make(chan struct{})}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { _, err := newWithScanner(fake, 0).Execute(ctx, sdk.Target{Host: "example.com"}); done <- err }()
+		Eventually(fake.started).Should(BeClosed())
+		cancel()
+		Eventually(done).Should(Receive(MatchError(context.Canceled)))
 	})
 
 	It("reports its capability and prepares successfully", func() {

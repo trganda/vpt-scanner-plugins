@@ -28,6 +28,15 @@ type PortResult struct {
 
 type naabuScanner struct{}
 
+type naabuRunner interface {
+	RunEnumeration(context.Context) error
+	Close() error
+}
+
+var newNaabuRunner = func(opts *runner.Options) (naabuRunner, error) {
+	return runner.NewRunner(opts)
+}
+
 func newNaabuScanner() *naabuScanner {
 	// Silence naabu's global logger so it doesn't emit banners or progress
 	// lines. In a plugin this matters doubly: go-plugin uses stdout for the
@@ -72,7 +81,7 @@ func (n *naabuScanner) Scan(ctx context.Context, host, ports string) ([]PortResu
 		opts.Ports = ports
 	}
 
-	r, err := runner.NewRunner(&opts)
+	r, err := newNaabuRunner(&opts)
 	if err != nil {
 		return nil, fmt.Errorf("portscan: build naabu runner: %w", err)
 	}

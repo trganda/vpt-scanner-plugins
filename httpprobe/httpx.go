@@ -21,12 +21,20 @@ import (
 // the result payload stays small and binary-safe.
 const maxBodyBytes = 64 * 1024
 
-// httpxGlobalMu serialises Probe() calls across the whole process. httpx stores
+// httpxGlobalGate serialises Probe() calls across the whole process. httpx stores
 // its custom-port set in a package-level map (customport.Ports) which the
 // runner reads during enumeration — two concurrent Probe() calls would race on
 // that map. In a single-tool plugin process this is rarely contended, but the
-// guard is kept since the global is httpx-internal.
-var httpxGlobalMu sync.Mutex
+// guard is kept since the global is httpx-internal. A channel is used instead
+// of a mutex so cancellation can avoid waiting behind a runner that is still
+// unwinding.
+var httpxGlobalGate = func() chan struct{} {
+	gate := make(chan struct{}, 1)
+	gate <- struct{}{}
+	return gate
+}()
+
+const httpxCancellationGracePeriod = 250 * time.Millisecond
 
 // ProbeResult is one URL's worth of HTTP metadata, stored in
 // ScanResult.Raw["probes"]. The JSON shape here is the cross-process contract
@@ -72,6 +80,16 @@ type httpxProber struct {
 	opts Options
 }
 
+type httpxRunner interface {
+	RunEnumeration()
+	Interrupt()
+	Close()
+}
+
+var newHTTPXRunner = func(opts *runner.Options) (httpxRunner, error) {
+	return runner.New(opts)
+}
+
 // newHTTPXProber silences gologger eagerly so httpx's banner / progress lines
 // never reach stderr, and (in a plugin) never corrupt the go-plugin handshake
 // on stdout.
@@ -84,14 +102,22 @@ func newHTTPXProber(opts Options) (*httpxProber, error) {
 // (host, ports) pair, runs the enumeration, and collects per-URL results from
 // the OnResult callback.
 func (h *httpxProber) Probe(ctx context.Context, host, ports string) ([]ProbeResult, error) {
-	httpxGlobalMu.Lock()
-	defer httpxGlobalMu.Unlock()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-httpxGlobalGate:
+	}
+	var gateReleased sync.Once
+	releaseGate := func() {
+		gateReleased.Do(func() { httpxGlobalGate <- struct{}{} })
+	}
 
 	// Reset the global before populating it so we don't see ports from a prior
 	// caller. CustomPorts.Set() merges into customport.Ports.
 	customport.Ports = map[int]string{}
 	cp := customport.CustomPorts{}
 	if err := cp.Set(ports); err != nil {
+		releaseGate()
 		return nil, fmt.Errorf("httpprobe: parse ports %q: %w", ports, err)
 	}
 
@@ -180,25 +206,32 @@ func (h *httpxProber) Probe(ctx context.Context, host, ports string) ([]ProbeRes
 		},
 	}
 
-	r, err := runner.New(rOpts)
+	r, err := newHTTPXRunner(rOpts)
 	if err != nil {
+		releaseGate()
 		return nil, fmt.Errorf("httpprobe: build httpx runner: %w", err)
 	}
-	defer r.Close()
-
 	// RunEnumeration() doesn't take a context. Honour ctx cancellation by
 	// running enumeration in a goroutine and Interrupt()-ing it when the
-	// caller's context fires.
+	// caller's context fires. Cleanup is deliberately owned by the enumeration
+	// goroutine: closing the runner here could race with httpx still unwinding.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		r.RunEnumeration()
+		r.Close()
+		releaseGate()
 	}()
 
 	select {
 	case <-ctx.Done():
 		r.Interrupt()
-		<-done
+		grace := time.NewTimer(httpxCancellationGracePeriod)
+		defer grace.Stop()
+		select {
+		case <-done:
+		case <-grace.C:
+		}
 		return nil, ctx.Err()
 	case <-done:
 	}
