@@ -57,5 +57,13 @@ For release-like builds, use:
 (cd <module> && GOWORK=off CGO_ENABLED=0 go build -trimpath .)
 ```
 
-Plugin releases target Linux amd64 and arm64. Capability-specific tags use
-`plugin-<capability>-vX.Y.Z`; a `vX.Y.Z` tag releases all plugins.
+Plugin releases target Linux amd64 and arm64. Follow this tag convention:
+
+- Normal single-plugin releases use `plugin-<capability>-vX.Y.Z`. They publish
+  only the named capability's Linux amd64 and arm64 artifacts plus
+  `multiple.intoto.jsonl` provenance.
+- Coordinated bundle releases use `vX.Y.Z`. They must publish Linux amd64 and
+  arm64 artifacts for all four capabilities plus one provenance bundle.
+- The GitHub Release display title may be `vX.Y.Z` in either case. The Git tag
+  is the artifact-download and SLSA provenance identity, so do not retag a
+  published release; create a replacement release when that identity is wrong.
