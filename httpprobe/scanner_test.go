@@ -8,6 +8,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	asnmap "github.com/projectdiscovery/asnmap/libs"
 	"github.com/trganda/vpt-scanner-plugins/sdk"
 )
 
@@ -44,6 +45,16 @@ func decodeRaw(r sdk.Result) map[string]any {
 }
 
 var _ = Describe("scanner", func() {
+	It("configures asnmap from the VPT PDCP key", func() {
+		previous := asnmap.PDCPApiKey
+		DeferCleanup(func() { asnmap.PDCPApiKey = previous })
+
+		_, err := newHTTPXProber(Options{PdcpAPIKey: "test-pdcp-key"})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(asnmap.PDCPApiKey).To(Equal("test-pdcp-key"))
+	})
+
 	It("preserves the raw result shape", func() {
 		fake := &fakeProber{probes: []ProbeResult{
 			{URL: "https://example.com", Scheme: "https", StatusCode: 200, WebServer: "nginx"},

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	asnmap "github.com/projectdiscovery/asnmap/libs"
 	"github.com/projectdiscovery/goflags"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/gologger/levels"
@@ -95,6 +96,11 @@ var newHTTPXRunner = func(opts *runner.Options) (httpxRunner, error) {
 // on stdout.
 func newHTTPXProber(opts Options) (*httpxProber, error) {
 	gologger.DefaultLogger.SetMaxLevel(levels.LevelSilent)
+	// runner.New does not apply the CLI-only PdcpAuth setup, while its ASN
+	// lookup reads asnmap's package-level key directly.
+	if opts.PdcpAPIKey != "" {
+		asnmap.PDCPApiKey = opts.PdcpAPIKey
+	}
 	return &httpxProber{opts: opts}, nil
 }
 
