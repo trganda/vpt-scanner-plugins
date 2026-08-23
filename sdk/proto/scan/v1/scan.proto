@@ -20,6 +20,7 @@ service ScanPlugin {
   rpc Execute(ExecuteRequest) returns (ExecuteResponse);
   rpc ExecuteStream(ExecuteRequest) returns (stream ExecuteEvent);
   rpc Prepare(PrepareRequest) returns (PrepareResponse);
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
 }
 
 message CapabilityRequest {}
@@ -31,6 +32,8 @@ message CapabilityResponse {
 message ExecuteRequest {
   string host = 1;
   map<string, string> params = 2;
+  string contract_id = 3;
+  string contract_digest = 4;
 }
 
 message ExecuteResponse {
@@ -39,6 +42,33 @@ message ExecuteResponse {
   bytes raw_json = 2;
   int64 started_at_unix_nano = 3;
   int64 finished_at_unix_nano = 4;
+  repeated NamedOutput outputs = 5;
+  string contract_id = 6;
+  string contract_digest = 7;
+}
+
+message NamedOutput {
+  string name = 1;
+  repeated TypedValue values = 2;
+}
+
+message TypedValue {
+  oneof value {
+    string domain = 1;
+    string host = 2;
+    string url = 3;
+  }
+}
+
+message DescribeRequest {}
+
+message DescribeResponse {
+  string capability = 1;
+  bytes canonical_manifest_json = 2;
+  string contract_id = 3;
+  string contract_digest = 4;
+  string manifest_sha256 = 5;
+  uint32 protocol_version = 6;
 }
 
 // ExecuteEvent is either a progress event or the terminal result. Exactly one

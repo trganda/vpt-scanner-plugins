@@ -1,6 +1,7 @@
 package sdk_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"time"
@@ -10,7 +11,12 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/trganda/vpt-scanner-plugins/sdk"
+	"github.com/trganda/vpt-scanner-plugins/sdk/contract"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+func strptr(s string) *string { return &s }
 
 type stubScanner struct {
 	gotTarget      sdk.Target
@@ -59,6 +65,103 @@ func (s *stubScanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.
 }
 
 var _ = Describe("SDK", func() {
+	It("round-trips manifest description and canonical contract execution", func() {
+		manifest := contract.Manifest{ManifestVersion: 1, Capability: "portscan", ContractID: "vpt/portscan/v1", Inputs: []contract.Input{{Name: "target", AcceptedTypes: []string{"host/v1"}, Cardinality: "one"}}, Outputs: []contract.Output{{Name: "host", Type: "host/v1", Cardinality: "one"}}, Parameters: []contract.Parameter{{Name: "mode", Kind: "enum", Enum: []string{"fast", "full"}, Default: strptr("fast")}}}
+		d, err := contract.Compile(manifest)
+		Expect(err).NotTo(HaveOccurred())
+		var printed bytes.Buffer
+		handled, err := sdk.PrintManifestIfRequested(manifest, []string{"--print-manifest"}, &printed)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(handled).To(BeTrue())
+		Expect(printed.Bytes()).To(Equal(d.CanonicalJSON()))
+		Expect(printed.String()).NotTo(HaveSuffix("\n"))
+		handled, err = sdk.PrintManifestIfRequested(manifest, []string{"serve"}, &printed)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(handled).To(BeFalse())
+		stub := &stubScanner{}
+		calls := 0
+		pm, err := sdk.PluginMapWithManifest(stub, manifest, sdk.ManifestOptions{
+			TargetMapper: func(target sdk.Target) (sdk.Target, error) {
+				target.Params["mapped"] = "true"
+				return target, nil
+			},
+			OutputMapper: func(t sdk.Target, _ sdk.Result) ([]contract.NamedOutput, error) {
+				calls++
+				v, e := contract.Host(t.Host)
+				return []contract.NamedOutput{{Name: "host", Values: []contract.Value{v}}}, e
+			},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		conn, _ := goplugin.TestPluginGRPCConn(GinkgoTB(), false, pm)
+		DeferCleanup(func() { conn.Close() })
+		raw, err := conn.Dispense(sdk.PluginName)
+		Expect(err).NotTo(HaveOccurred())
+		desc := raw.(sdk.Describer)
+		ce := raw.(sdk.ContractExecutor)
+		got, err := desc.Describe(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.CanonicalManifestJSON).To(Equal(d.CanonicalJSON()))
+		Expect(got.Capability).To(Equal(manifest.Capability))
+		Expect(got.ContractID).To(Equal(manifest.ContractID))
+		Expect(got.ContractDigest).To(Equal(d.Digest()))
+		Expect(got.ManifestSHA256).To(Equal(d.ManifestDigest()))
+		Expect(got.ProtocolVersion).To(Equal(uint32(1)))
+		res, err := ce.ExecuteContract(context.Background(), sdk.ContractRequest{Target: sdk.Target{Host: "EXAMPLE.COM"}, ContractID: manifest.ContractID, ContractDigest: d.Digest()})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stub.gotTarget.Host).To(Equal("example.com"))
+		Expect(stub.gotTarget.Params).To(Equal(map[string]string{"mode": "fast", "mapped": "true"}))
+		Expect(res.Result.Capability).To(Equal("portscan"))
+		Expect(res.Result.StartedAtUnixNano).To(Equal(int64(1000)))
+		Expect(res.Result.FinishedAtUnixNano).To(Equal(int64(2000)))
+		Expect(res.ContractID).To(Equal(manifest.ContractID))
+		Expect(res.ContractDigest).To(Equal(d.Digest()))
+		Expect(res.Outputs[0].Values[0].String()).To(Equal("example.com"))
+		Expect(calls).To(Equal(1))
+		var events []sdk.Event
+		streamed, err := ce.ExecuteStreamContract(context.Background(), sdk.ContractRequest{Target: sdk.Target{Host: "EXAMPLE.COM"}, ContractID: manifest.ContractID, ContractDigest: d.Digest()}, func(event sdk.Event) error {
+			events = append(events, event)
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(events).To(HaveLen(1))
+		Expect(streamed).To(Equal(res))
+		Expect(calls).To(Equal(2))
+
+		legacy := raw.(sdk.Scanner)
+		_, err = legacy.Execute(context.Background(), sdk.Target{Host: "legacy target", Params: map[string]string{"unknown": "preserved"}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stub.gotTarget).To(Equal(sdk.Target{Host: "legacy target", Params: map[string]string{"unknown": "preserved"}}))
+		_, err = legacy.ExecuteStream(context.Background(), sdk.Target{Host: "legacy stream", Params: map[string]string{"unknown": "preserved"}}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(calls).To(Equal(2), "legacy requests must not invoke the output mapper")
+
+		_, err = ce.ExecuteContract(context.Background(), sdk.ContractRequest{ContractID: manifest.ContractID})
+		Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+		_, err = ce.ExecuteContract(context.Background(), sdk.ContractRequest{})
+		Expect(status.Code(err)).To(Equal(codes.FailedPrecondition))
+		_, err = ce.ExecuteContract(context.Background(), sdk.ContractRequest{Target: sdk.Target{Host: "example.com"}, ContractID: manifest.ContractID, ContractDigest: "sha256:" + string(bytes.Repeat([]byte("0"), 64))})
+		Expect(status.Code(err)).To(Equal(codes.FailedPrecondition))
+	})
+
+	It("keeps manifest-free plugins legacy-only and validates serving constraints", func() {
+		stub := &stubScanner{}
+		conn, _ := goplugin.TestPluginGRPCConn(GinkgoTB(), false, sdk.PluginMap(stub))
+		DeferCleanup(func() { conn.Close() })
+		raw, err := conn.Dispense(sdk.PluginName)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = raw.(sdk.Describer).Describe(context.Background())
+		Expect(status.Code(err)).To(Equal(codes.Unimplemented))
+		_, err = raw.(sdk.ContractExecutor).ExecuteContract(context.Background(), sdk.ContractRequest{Target: sdk.Target{Host: "example.com"}, ContractID: "vpt/portscan/v1", ContractDigest: "sha256:" + string(bytes.Repeat([]byte("0"), 64))})
+		Expect(status.Code(err)).To(Equal(codes.FailedPrecondition))
+
+		manifest := contract.Manifest{ManifestVersion: 1, Capability: "portscan", ContractID: "vpt/portscan/v1", Inputs: []contract.Input{{Name: "target", AcceptedTypes: []string{"host/v1"}, Cardinality: "many"}}, Outputs: []contract.Output{}, Parameters: []contract.Parameter{}}
+		_, err = sdk.PluginMapWithManifest(stub, manifest, sdk.ManifestOptions{})
+		Expect(err).To(HaveOccurred())
+		manifest.Inputs[0].Cardinality = "one"
+		manifest.Outputs = []contract.Output{{Name: "hosts", Type: "host/v1", Cardinality: "many"}}
+		_, err = sdk.PluginMapWithManifest(stub, manifest, sdk.ManifestOptions{})
+		Expect(err).To(MatchError(ContainSubstring("output mapper")))
+	})
 	It("keeps the handshake protocol version", func() {
 		Expect(sdk.Handshake.ProtocolVersion).To(Equal(uint(1)), "want 1 for additive ExecuteStream rollout")
 	})

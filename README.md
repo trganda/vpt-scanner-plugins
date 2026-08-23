@@ -22,6 +22,16 @@ timestamp; plugin stdout/stderr, credentials, parameters, and request/response
 bodies are never captured. `Execute` remains available as a compatibility
 operation.
 
+Capability contracts are additive to that protocol. The dependency-free
+`sdk/contract` package validates and canonicalizes versioned manifests, governed
+parameters, and typed orchestration outputs. Contract-aware plugins use
+`ServeWithManifest`; existing `Scanner` implementations and plugins using
+`Serve` remain source compatible and continue to execute legacy requests with
+their historical permissive parameters and Raw-only responses. `Describe` and
+contract-bearing execution are optional interfaces exposed by the SDK client.
+The `--print-manifest` helper emits the same canonical bytes returned by
+`Describe` without initializing a scanner tool.
+
 ## Releases
 
 Plugins can be released independently using `plugin-<capability>-vX.Y.Z` tags,
