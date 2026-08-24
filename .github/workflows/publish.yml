@@ -88,10 +88,6 @@ jobs:
           cache-dependency-path: |
             ${{ matrix.plugin.module }}/go.sum
             sdk/go.sum
-      - uses: docker/setup-qemu-action@v3
-        if: needs.validate.outputs.capability == 'all' || needs.validate.outputs.capability == matrix.plugin.capability
-        with:
-          platforms: arm64
       - name: Build plugin
         if: needs.validate.outputs.capability == 'all' || needs.validate.outputs.capability == matrix.plugin.capability
         working-directory: ${{ matrix.plugin.module }}
@@ -103,7 +99,7 @@ jobs:
         run: |
           mkdir -p ../dist
           GOWORK=off go build -trimpath -o "$OUTPUT" .
-          "$OUTPUT" --print-manifest > "../dist/${{ matrix.plugin.capability }}_contract.json"
+          env -u GOOS -u GOARCH GOWORK=off go run . --print-manifest > "../dist/${{ matrix.plugin.capability }}_contract.json"
           test -s "../dist/${{ matrix.plugin.capability }}_contract.json"
           python3 - "../dist/${{ matrix.plugin.capability }}_contract.json" <<'PY'
           import hashlib, json, pathlib, sys
@@ -154,9 +150,12 @@ jobs:
                binary=$(find "$source" -name "${capability}_linux_${arch}" -type f -print -quit)
                manifest=$(find "$source" -name "${capability}_contract.json" -type f -print -quit)
                test -n "$binary" -a -n "$manifest"
-               "$binary" --print-manifest > "$source/generated.json"
+               chmod +x "$binary"
+               docker run --rm --platform "linux/$arch" \
+                 --mount "type=bind,source=$PWD/$source,target=/work,readonly" \
+                 debian:bookworm-slim "/work/$(basename "$binary")" --print-manifest > "$source/generated.json"
                cmp "$manifest" "$source/generated.json"
-               cp "$binary" "${capability}_linux_${arch}"
+               install -m 0755 "$binary" "${capability}_linux_${arch}"
                cp "$manifest" "${capability}_contract.json"
              done
              cmp "plugin-${capability}-linux-amd64/${capability}_contract.json" "plugin-${capability}-linux-arm64/${capability}_contract.json"
