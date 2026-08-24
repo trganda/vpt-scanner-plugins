@@ -36,8 +36,32 @@ jobs:
       - id: commit
         run: echo "sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
 
-  build:
+  verify:
     needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: sdk/go.mod
+          cache: true
+          cache-dependency-path: |
+            sdk/go.sum
+            portscan/go.sum
+            subfinder/go.sum
+            httpprobe/go.sum
+            nuclei/go.sum
+      - uses: bufbuild/buf-setup-action@v1
+      - name: Verify generated files and tests
+        run: |
+          make generate
+          git diff --exit-code
+          make test
+
+  build:
+    needs: [validate, verify]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -64,6 +88,10 @@ jobs:
           cache-dependency-path: |
             ${{ matrix.plugin.module }}/go.sum
             sdk/go.sum
+      - uses: docker/setup-qemu-action@v3
+        if: needs.validate.outputs.capability == 'all' || needs.validate.outputs.capability == matrix.plugin.capability
+        with:
+          platforms: arm64
       - name: Build plugin
         if: needs.validate.outputs.capability == 'all' || needs.validate.outputs.capability == matrix.plugin.capability
         working-directory: ${{ matrix.plugin.module }}
@@ -72,12 +100,29 @@ jobs:
           GOOS: linux
           GOARCH: ${{ matrix.arch }}
           OUTPUT: ../dist/${{ matrix.plugin.capability }}_linux_${{ matrix.arch }}
-        run: mkdir -p ../dist && GOWORK=off go build -trimpath -o "$OUTPUT" .
+        run: |
+          mkdir -p ../dist
+          GOWORK=off go build -trimpath -o "$OUTPUT" .
+          "$OUTPUT" --print-manifest > "../dist/${{ matrix.plugin.capability }}_contract.json"
+          test -s "../dist/${{ matrix.plugin.capability }}_contract.json"
+          python3 - "../dist/${{ matrix.plugin.capability }}_contract.json" <<'PY'
+          import hashlib, json, pathlib, sys
+          p = pathlib.Path(sys.argv[1])
+          raw = p.read_bytes()
+          doc = json.loads(raw)
+          semantic_keys = ("manifest_version", "capability", "contract_id", "inputs", "outputs", "parameters")
+          semantic = {k: doc[k] for k in semantic_keys}
+          sem = json.dumps(semantic, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
+          print("semantic_sha256=sha256:" + hashlib.sha256(sem).hexdigest())
+          print("manifest_sha256=sha256:" + hashlib.sha256(raw).hexdigest())
+          PY
       - uses: actions/upload-artifact@v7
         if: needs.validate.outputs.capability == 'all' || needs.validate.outputs.capability == matrix.plugin.capability
         with:
           name: plugin-${{ matrix.plugin.capability }}-linux-${{ matrix.arch }}
-          path: dist/${{ matrix.plugin.capability }}_linux_${{ matrix.arch }}
+          path: |
+            dist/${{ matrix.plugin.capability }}_linux_${{ matrix.arch }}
+            dist/${{ matrix.plugin.capability }}_contract.json
           if-no-files-found: error
           retention-days: 7
 
@@ -93,16 +138,50 @@ jobs:
         with:
           pattern: plugin-*
           path: dist
-          merge-multiple: true
+          merge-multiple: false
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
       - id: subjects
         working-directory: dist
-        run: echo "subjects=$(sha256sum *_linux_* | base64 -w0)" >>"$GITHUB_OUTPUT"
+        run: |
+           set -euo pipefail
+           for capability in portscan subdomain httpprobe vuln; do
+             if [[ "${{ needs.validate.outputs.capability }}" != all && "$capability" != "${{ needs.validate.outputs.capability }}" ]]; then continue; fi
+             for arch in amd64 arm64; do
+               source="plugin-${capability}-linux-${arch}"
+               test -d "$source"
+               binary=$(find "$source" -name "${capability}_linux_${arch}" -type f -print -quit)
+               manifest=$(find "$source" -name "${capability}_contract.json" -type f -print -quit)
+               test -n "$binary" -a -n "$manifest"
+               "$binary" --print-manifest > "$source/generated.json"
+               cmp "$manifest" "$source/generated.json"
+               cp "$binary" "${capability}_linux_${arch}"
+               cp "$manifest" "${capability}_contract.json"
+             done
+             cmp "plugin-${capability}-linux-amd64/${capability}_contract.json" "plugin-${capability}-linux-arm64/${capability}_contract.json"
+             test "$(sha256sum "${capability}_contract.json" | cut -d' ' -f1)" = "$(sha256sum "plugin-${capability}-linux-amd64/${capability}_contract.json" | cut -d' ' -f1)"
+           done
+           python3 - <<'PY'
+           import base64, hashlib, json, pathlib
+           files = sorted(p for p in pathlib.Path('.').glob('*') if p.is_file() and p.name != 'subjects.txt')
+           for p in files:
+             raw = p.read_bytes()
+             if p.name.endswith('_contract.json'):
+               doc = json.loads(raw)
+               semantic_keys = ("manifest_version", "capability", "contract_id", "inputs", "outputs", "parameters")
+               semantic = {k: doc[k] for k in semantic_keys}
+               sem = json.dumps(semantic, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
+               print(f"{p}: semantic_sha256=sha256:{hashlib.sha256(sem).hexdigest()} manifest_sha256=sha256:{hashlib.sha256(raw).hexdigest()}")
+           PY
+           sha256sum ./*_linux_* ./*_contract.json > subjects.txt
+           echo "subjects=$(base64 -w0 subjects.txt)" >> "$GITHUB_OUTPUT"
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           GH_REPO: ${{ github.repository }}
-        run: gh release upload "$RELEASE_TAG" dist/* --clobber --repo "$GH_REPO"
+        run: gh release upload "$RELEASE_TAG" dist/*_linux_* dist/*_contract.json --repo "$GH_REPO"
 
   provenance:
     needs: collect

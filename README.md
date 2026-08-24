@@ -13,9 +13,8 @@ Public runtime scanner plugins and the shared go-plugin gRPC SDK for VPT.
 ## Protocol
 
 The SDK retains go-plugin handshake `ProtocolVersion: 1`: `ExecuteStream` is an
-additive gRPC method and therefore does not require a handshake bump. The
-next patch release for this rollout is `v0.2.1`. `ScanPlugin.ExecuteStream` is
-the canonical scan operation: it delivers
+additive gRPC method and therefore does not require a handshake bump.
+`ScanPlugin.ExecuteStream` is the canonical scan operation: it delivers
 structured, bounded progress events followed by one terminal result. Events
 contain a per-call sequence, level, type, safe message, string fields, and UTC
 timestamp; plugin stdout/stderr, credentials, parameters, and request/response
@@ -36,9 +35,12 @@ The `--print-manifest` helper emits the same canonical bytes returned by
 
 Plugins can be released independently using `plugin-<capability>-vX.Y.Z` tags,
 or together using a `vX.Y.Z` tag. GitHub Actions publishes Linux amd64/arm64
-binaries and SLSA provenance.
+binaries, canonical contract manifests, and SLSA provenance. The initial
+contract-aware rollout uses the four per-capability `v0.3.0` tags because the
+backend catalog currently validates capability-scoped source tags.
 
 ```bash
+make generate
 make test
 make build
 ```

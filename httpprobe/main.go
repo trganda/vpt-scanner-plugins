@@ -4,8 +4,26 @@
 // it out of the scanner host binary.
 package main
 
-import "github.com/trganda/vpt-scanner-plugins/sdk"
+import (
+	"fmt"
+	"os"
+
+	"github.com/trganda/vpt-scanner-plugins/sdk"
+)
+
+func pluginOptions() sdk.ManifestOptions { return sdk.ManifestOptions{} }
 
 func main() {
-	sdk.Serve(newScanner())
+	m := manifest()
+	if handled, err := sdk.PrintManifestIfRequested(m, os.Args[1:], os.Stdout); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if err := sdk.ServeWithManifest(newScanner(), m, pluginOptions()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
