@@ -122,6 +122,7 @@ type Parameter struct {
 	MaxLength *int     `json:"max_length,omitempty"`
 	MinItems  *int     `json:"min_items,omitempty"`
 	MaxItems  *int     `json:"max_items,omitempty"`
+	ItemsEnum []string `json:"items_enum,omitempty"`
 }
 type semanticManifest struct {
 	ManifestVersion int         `json:"manifest_version"`
@@ -452,6 +453,17 @@ func validate(m *Manifest) error {
 				seen[x] = true
 			}
 		}
+		if p.Kind == "string_list" {
+			seen := map[string]bool{}
+			for _, x := range p.ItemsEnum {
+				if x == "" || seen[x] {
+					return errors.New("invalid items enum")
+				}
+				seen[x] = true
+			}
+		} else if len(p.ItemsEnum) > 0 {
+			return errors.New("inapplicable items enum")
+		}
 		for _, x := range []*int{p.MinLength, p.MaxLength, p.MinItems, p.MaxItems} {
 			if x != nil && *x < 0 {
 				return errors.New("negative bound")
@@ -565,6 +577,20 @@ func NormalizeParameter(p Parameter, in map[string]string) (map[string]string, e
 			parts[i] = strings.TrimSpace(parts[i])
 			if parts[i] == "" {
 				return nil, errors.New("empty list item")
+			}
+		}
+		if len(p.ItemsEnum) > 0 {
+			for _, item := range parts {
+				found := false
+				for _, allowed := range p.ItemsEnum {
+					if item == allowed {
+						found = true
+						break
+					}
+				}
+				if !found {
+					return nil, errors.New("invalid list item")
+				}
 			}
 		}
 		if (p.MinItems != nil && len(parts) < *p.MinItems) || (p.MaxItems != nil && len(parts) > *p.MaxItems) {
@@ -824,6 +850,9 @@ func cloneManifest(m Manifest) Manifest {
 		if m.Parameters[i].Enum != nil {
 			o.Parameters[i].Enum = append([]string{}, m.Parameters[i].Enum...)
 		}
+		if m.Parameters[i].ItemsEnum != nil {
+			o.Parameters[i].ItemsEnum = append([]string{}, m.Parameters[i].ItemsEnum...)
+		}
 		if m.Parameters[i].Default != nil {
 			x := *m.Parameters[i].Default
 			o.Parameters[i].Default = &x
@@ -964,6 +993,11 @@ func validateUTF8(m Manifest) error {
 			}
 		}
 		for _, x := range p.Enum {
+			if err := check(x); err != nil {
+				return err
+			}
+		}
+		for _, x := range p.ItemsEnum {
 			if err := check(x); err != nil {
 				return err
 			}

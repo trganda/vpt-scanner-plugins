@@ -101,6 +101,14 @@ jobs:
           GOWORK=off go build -trimpath -o "$OUTPUT" .
           env -u GOOS -u GOARCH GOWORK=off go run . --print-manifest > "../dist/${{ matrix.plugin.capability }}_contract.json"
           test -s "../dist/${{ matrix.plugin.capability }}_contract.json"
+          env -u GOOS -u GOARCH GOWORK=off go run . --print-compatible-contracts > "../dist/${{ matrix.plugin.capability }}_compatible_contracts.json"
+          env -u GOOS -u GOARCH GOWORK=off go run . --print-runtime > "../dist/${{ matrix.plugin.capability }}_runtime.json"
+          python3 - "../dist/${{ matrix.plugin.capability }}_compatible_contracts.json" "../dist/${{ matrix.plugin.capability }}_runtime.json" <<'PY'
+          import json, pathlib, sys
+          for name in sys.argv[1:]:
+            p = pathlib.Path(name); value = json.loads(p.read_text())
+            if value in (None, []): p.unlink()
+          PY
           python3 - "../dist/${{ matrix.plugin.capability }}_contract.json" <<'PY'
           import hashlib, json, pathlib, sys
           p = pathlib.Path(sys.argv[1])
@@ -119,6 +127,8 @@ jobs:
           path: |
             dist/${{ matrix.plugin.capability }}_linux_${{ matrix.arch }}
             dist/${{ matrix.plugin.capability }}_contract.json
+            dist/${{ matrix.plugin.capability }}_compatible_contracts.json
+            dist/${{ matrix.plugin.capability }}_runtime.json
           if-no-files-found: error
           retention-days: 7
 
@@ -141,46 +151,67 @@ jobs:
       - id: subjects
         working-directory: dist
         run: |
-           set -euo pipefail
-           for capability in portscan subdomain httpprobe vuln; do
-             if [[ "${{ needs.validate.outputs.capability }}" != all && "$capability" != "${{ needs.validate.outputs.capability }}" ]]; then continue; fi
-             for arch in amd64 arm64; do
-               source="plugin-${capability}-linux-${arch}"
-               test -d "$source"
-               binary=$(find "$source" -name "${capability}_linux_${arch}" -type f -print -quit)
-               manifest=$(find "$source" -name "${capability}_contract.json" -type f -print -quit)
-               test -n "$binary" -a -n "$manifest"
-               chmod +x "$binary"
-               docker run --rm --platform "linux/$arch" \
-                 --mount "type=bind,source=$PWD/$source,target=/work,readonly" \
-                 debian:bookworm-slim "/work/$(basename "$binary")" --print-manifest > "$source/generated.json"
-               cmp "$manifest" "$source/generated.json"
-               install -m 0755 "$binary" "${capability}_linux_${arch}"
-               cp "$manifest" "${capability}_contract.json"
-             done
-             cmp "plugin-${capability}-linux-amd64/${capability}_contract.json" "plugin-${capability}-linux-arm64/${capability}_contract.json"
-             test "$(sha256sum "${capability}_contract.json" | cut -d' ' -f1)" = "$(sha256sum "plugin-${capability}-linux-amd64/${capability}_contract.json" | cut -d' ' -f1)"
-           done
-           python3 - <<'PY'
-           import base64, hashlib, json, pathlib
-           files = sorted(p for p in pathlib.Path('.').glob('*') if p.is_file() and p.name != 'subjects.txt')
-           for p in files:
-             raw = p.read_bytes()
-             if p.name.endswith('_contract.json'):
-               doc = json.loads(raw)
-               semantic_keys = ("manifest_version", "capability", "contract_id", "inputs", "outputs", "parameters")
-               semantic = {k: doc[k] for k in semantic_keys}
-               sem = json.dumps(semantic, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
-               print(f"{p}: semantic_sha256=sha256:{hashlib.sha256(sem).hexdigest()} manifest_sha256=sha256:{hashlib.sha256(raw).hexdigest()}")
-           PY
-           sha256sum -- *_linux_* *_contract.json > subjects.txt
-           echo "subjects=$(base64 -w0 subjects.txt)" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          for capability in portscan subdomain httpprobe vuln; do
+            if [[ "${{ needs.validate.outputs.capability }}" != all && "$capability" != "${{ needs.validate.outputs.capability }}" ]]; then continue; fi
+            for arch in amd64 arm64; do
+              source="plugin-${capability}-linux-${arch}"
+              test -d "$source"
+              binary=$(find "$source" -name "${capability}_linux_${arch}" -type f -print -quit)
+              manifest=$(find "$source" -name "${capability}_contract.json" -type f -print -quit)
+              compatible=$(find "$source" -name "${capability}_compatible_contracts.json" -type f -print -quit || true)
+              runtime=$(find "$source" -name "${capability}_runtime.json" -type f -print -quit || true)
+              test -n "$binary" -a -n "$manifest"
+              chmod +x "$binary"
+              docker run --rm --platform "linux/$arch" \
+                --mount "type=bind,source=$PWD/$source,target=/work,readonly" \
+                debian:bookworm-slim "/work/$(basename "$binary")" --print-manifest > "$source/generated.json"
+              cmp "$manifest" "$source/generated.json"
+              for flag in --print-compatible-contracts --print-runtime; do
+                case "$flag" in
+                  --print-compatible-contracts) expected="$compatible"; out=compatible.generated.json ;;
+                  --print-runtime) expected="$runtime"; out=runtime.generated.json ;;
+                esac
+                if [[ -n "$expected" && -s "$expected" ]]; then
+                  docker run --rm --platform "linux/$arch" --mount "type=bind,source=$PWD/$source,target=/work,readonly" debian:bookworm-slim "/work/$(basename "$binary")" "$flag" > "$source/$out"
+                  cmp "$expected" "$source/$out"
+                fi
+              done
+              install -m 0755 "$binary" "${capability}_linux_${arch}"
+              cp "$manifest" "${capability}_contract.json"
+              if [[ -n "$compatible" && -s "$compatible" && "$(tr -d '[:space:]' < "$compatible")" != "[]" ]]; then cp "$compatible" "${capability}_compatible_contracts.json"; fi
+              if [[ -n "$runtime" && -s "$runtime" && "$(tr -d '[:space:]' < "$runtime")" != "null" ]]; then cp "$runtime" "${capability}_runtime.json"; fi
+            done
+            cmp "plugin-${capability}-linux-amd64/${capability}_contract.json" "plugin-${capability}-linux-arm64/${capability}_contract.json"
+            for optional in compatible_contracts runtime; do
+              a="plugin-${capability}-linux-amd64/${capability}_${optional}.json"; b="plugin-${capability}-linux-arm64/${capability}_${optional}.json"
+              if [[ -e "$a" || -e "$b" ]]; then test -e "$a" -a -e "$b"; cmp "$a" "$b"; fi
+            done
+            test "$(sha256sum "${capability}_contract.json" | cut -d' ' -f1)" = "$(sha256sum "plugin-${capability}-linux-amd64/${capability}_contract.json" | cut -d' ' -f1)"
+          done
+          python3 - <<'PY'
+          import base64, hashlib, json, pathlib
+          files = sorted(p for p in pathlib.Path('.').glob('*') if p.is_file() and p.name != 'subjects.txt')
+          for p in files:
+            raw = p.read_bytes()
+            if p.name.endswith('_contract.json'):
+              doc = json.loads(raw)
+              semantic_keys = ("manifest_version", "capability", "contract_id", "inputs", "outputs", "parameters")
+              semantic = {k: doc[k] for k in semantic_keys}
+              sem = json.dumps(semantic, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
+              print(f"{p}: semantic_sha256=sha256:{hashlib.sha256(sem).hexdigest()} manifest_sha256=sha256:{hashlib.sha256(raw).hexdigest()}")
+          PY
+          sha256sum -- *_linux_* *_contract.json $(compgen -G '*_compatible_contracts.json' || true) $(compgen -G '*_runtime.json' || true) > subjects.txt
+          echo "subjects=$(base64 -w0 subjects.txt)" >> "$GITHUB_OUTPUT"
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           GH_REPO: ${{ github.repository }}
-        run: gh release upload "$RELEASE_TAG" dist/*_linux_* dist/*_contract.json --repo "$GH_REPO"
+        run: |
+          assets=(dist/*_linux_* dist/*_contract.json)
+          for optional in dist/*_compatible_contracts.json dist/*_runtime.json; do [[ -e "$optional" ]] && assets+=("$optional"); done
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GH_REPO"
 
   provenance:
     needs: collect

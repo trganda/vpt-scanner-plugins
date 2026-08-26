@@ -1,9 +1,14 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kelseyhightower/envconfig"
+	"github.com/trganda/vpt-scanner-plugins/sdk/runtimeconfig"
 )
 
 // Options is httpprobe's slice of the VPT_NODE_* namespace, parsed from the
@@ -22,7 +27,51 @@ type Options struct {
 }
 
 func loadOptions() (Options, error) {
+	d, err := runtimeconfig.Compile(runtimeManifest())
+	if err != nil {
+		return Options{}, err
+	}
 	var o Options
-	err := envconfig.Process("", &o)
-	return o, err
+	if err := envconfig.Process("", &o); err != nil {
+		return o, err
+	}
+	raw := os.Getenv("VPT_PLUGIN_RUNTIME_CONFIG")
+	if raw != "" {
+		pluginValues, _, err := d.ParseValues([]byte(raw))
+		if err != nil {
+			return o, err
+		}
+		if v, ok := pluginValues["threads"]; ok {
+			n, e := strconv.Atoi(v)
+			if e != nil {
+				return o, e
+			}
+			o.Threads = n
+		}
+		if v, ok := pluginValues["max_run_time_seconds"]; ok {
+			n, e := strconv.Atoi(v)
+			if e != nil {
+				return o, e
+			}
+			o.MaxRunTime = time.Duration(n) * time.Second
+		}
+	}
+	if err := validateOptions(o); err != nil {
+		return Options{}, err
+	}
+	return o, nil
+}
+
+func validateOptions(o Options) error {
+	if o.Threads < 1 || o.MaxRunTime < time.Second || o.Timeout < time.Second {
+		return fmt.Errorf("httpprobe: threads and timeouts must be positive")
+	}
+	allowed := map[string]bool{"GET": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true, "HEAD": true, "OPTIONS": true, "TRACE": true, "CONNECT": true}
+	for _, method := range o.Methods {
+		method = strings.TrimSpace(method)
+		if !allowed[method] {
+			return fmt.Errorf("httpprobe: unsupported method %q", method)
+		}
+	}
+	return nil
 }

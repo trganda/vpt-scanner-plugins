@@ -20,6 +20,7 @@ func strptr(s string) *string { return &s }
 
 type stubScanner struct {
 	gotTarget      sdk.Target
+	gotBatch       []sdk.Target
 	gotToken       string
 	startedExecute chan struct{}
 	startedStream  chan struct{}
@@ -62,6 +63,21 @@ func (s *stubScanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.
 	}
 	raw, _ := json.Marshal(map[string]any{"host": t.Host, "echo": t.Params["k"]})
 	return sdk.Result{Capability: "portscan", RawJSON: raw, StartedAtUnixNano: 1000, FinishedAtUnixNano: 2000}, nil
+}
+
+func (s *stubScanner) ExecuteBatch(ctx context.Context, targets []sdk.Target, sink sdk.EventSink) ([]sdk.Result, error) {
+	s.gotBatch = append([]sdk.Target(nil), targets...)
+	out := make([]sdk.Result, len(targets))
+	for i, target := range targets {
+		if sink != nil {
+			if err := sink(sdk.Event{Sequence: int64(i + 1), Index: i, Type: "scan_started"}); err != nil {
+				return nil, err
+			}
+		}
+		raw, _ := json.Marshal(map[string]any{"host": target.Host})
+		out[i] = sdk.Result{Capability: "portscan", RawJSON: raw, StartedAtUnixNano: 1000, FinishedAtUnixNano: 2000}
+	}
+	return out, ctx.Err()
 }
 
 var _ = Describe("SDK", func() {
@@ -161,6 +177,53 @@ var _ = Describe("SDK", func() {
 		manifest.Outputs = []contract.Output{{Name: "hosts", Type: "host/v1", Cardinality: "many"}}
 		_, err = sdk.PluginMapWithManifest(stub, manifest, sdk.ManifestOptions{})
 		Expect(err).To(MatchError(ContainSubstring("output mapper")))
+	})
+
+	It("serves compatible contracts and ordered contract batches", func() {
+		primary := contract.Manifest{ManifestVersion: 1, Capability: "portscan", ContractID: "vpt/portscan/v1", Inputs: []contract.Input{{Name: "target", AcceptedTypes: []string{"host/v1"}, Cardinality: "one"}}, Outputs: []contract.Output{}, Parameters: []contract.Parameter{{Name: "mode", Kind: "enum", Enum: []string{"fast"}, Default: strptr("fast")}}}
+		compatible := primary
+		compatible.Parameters = []contract.Parameter{{Name: "ports", Kind: "port_set", Default: strptr("80,443")}}
+		primaryDescriptor, err := contract.Compile(primary)
+		Expect(err).NotTo(HaveOccurred())
+		compatibleDescriptor, err := contract.Compile(compatible)
+		Expect(err).NotTo(HaveOccurred())
+		stub := &stubScanner{}
+		pm, err := sdk.PluginMapWithManifests(stub, primary, []contract.Manifest{compatible}, sdk.ManifestOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		conn, _ := goplugin.TestPluginGRPCConn(GinkgoTB(), false, pm)
+		DeferCleanup(func() { conn.Close() })
+		raw, err := conn.Dispense(sdk.PluginName)
+		Expect(err).NotTo(HaveOccurred())
+		description, err := raw.(sdk.Describer).Describe(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(description.ContractDigest).To(Equal(primaryDescriptor.Digest()))
+		Expect(description.SupportedContracts).To(HaveLen(2))
+		Expect(description.SupportedContracts[1].ContractDigest).To(Equal(compatibleDescriptor.Digest()))
+
+		_, err = raw.(sdk.ContractExecutor).ExecuteContract(context.Background(), sdk.ContractRequest{Target: sdk.Target{Host: "EXAMPLE.COM"}, ContractID: compatible.ContractID, ContractDigest: compatibleDescriptor.Digest()})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stub.gotTarget.ContractDigest).To(Equal(compatibleDescriptor.Digest()))
+		Expect(stub.gotTarget.Params).To(Equal(map[string]string{"ports": "80,443"}))
+
+		var events []sdk.Event
+		batch, err := raw.(sdk.BatchContractExecutor).ExecuteBatchContract(context.Background(), sdk.BatchContractRequest{Targets: []sdk.Target{{Host: "A.EXAMPLE.COM"}, {Host: "B.EXAMPLE.COM"}}, ContractID: primary.ContractID, ContractDigest: primaryDescriptor.Digest()}, func(event sdk.Event) error {
+			events = append(events, event)
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(batch.Results).To(HaveLen(2))
+		Expect(events).To(HaveLen(2))
+		Expect(events[0].Index).To(Equal(0))
+		Expect(events[0].OccurredAt).NotTo(BeZero())
+		Expect(stub.gotBatch[0]).To(Equal(sdk.Target{Host: "a.example.com", Params: map[string]string{"mode": "fast"}, ContractID: primary.ContractID, ContractDigest: primaryDescriptor.Digest()}))
+
+		_, err = raw.(sdk.BatchContractExecutor).ExecuteBatchContract(context.Background(), sdk.BatchContractRequest{Targets: []sdk.Target{{Host: "a.example.com", Params: map[string]string{"mode": "fast"}}, {Host: "b.example.com", Params: map[string]string{"mode": "other"}}}, ContractID: primary.ContractID, ContractDigest: primaryDescriptor.Digest()}, nil)
+		Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+		_, err = raw.(sdk.BatchContractExecutor).ExecuteBatchContract(context.Background(), sdk.BatchContractRequest{Targets: []sdk.Target{{Host: "a.example.com"}, {Host: "A.EXAMPLE.COM"}}, ContractID: primary.ContractID, ContractDigest: primaryDescriptor.Digest()}, nil)
+		Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+
+		_, err = sdk.PluginMapWithManifests(stub, primary, []contract.Manifest{primary}, sdk.ManifestOptions{})
+		Expect(err).To(MatchError(ContainSubstring("duplicate contract")))
 	})
 	It("keeps the handshake protocol version", func() {
 		Expect(sdk.Handshake.ProtocolVersion).To(Equal(uint(1)), "want 1 for additive ExecuteStream rollout")

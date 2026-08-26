@@ -283,6 +283,28 @@ func TestParameterNormalization(t *testing.T) {
 	}
 }
 
+func TestStringListItemsEnum(t *testing.T) {
+	p := Parameter{Name: "methods", Kind: "string_list", ItemsEnum: []string{"GET", "POST"}}
+	got, err := NormalizeParameter(p, map[string]string{"methods": "GET,POST"})
+	if err != nil || got["methods"] != "GET,POST" {
+		t.Fatalf("items enum normalization: %#v %v", got, err)
+	}
+	if _, err := NormalizeParameter(p, map[string]string{"methods": "GET,DELETE"}); err == nil {
+		t.Fatal("unknown list item accepted")
+	}
+	for _, bad := range []Parameter{
+		{Name: "methods", Kind: "string", ItemsEnum: []string{"GET"}},
+		{Name: "methods", Kind: "string_list", ItemsEnum: []string{""}},
+		{Name: "methods", Kind: "string_list", ItemsEnum: []string{"GET", "GET"}},
+	} {
+		m := testManifest()
+		m.Parameters = []Parameter{bad}
+		if _, err := Compile(m); err == nil {
+			t.Fatalf("invalid items enum accepted: %#v", bad)
+		}
+	}
+}
+
 func TestTypedValueValidation(t *testing.T) {
 	host, err := Host("::ffff:192.0.2.1")
 	if err != nil || host.String() != "192.0.2.1" {

@@ -37,7 +37,7 @@ func pluginOptions() sdk.ManifestOptions {
 
 func main() {
 	m := manifest()
-	if handled, err := sdk.PrintManifestIfRequested(m, os.Args[1:], os.Stdout); handled {
+	if handled, err := sdk.PrintManifestsIfRequested(m, nil, nil, os.Args[1:], os.Stdout); handled {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)

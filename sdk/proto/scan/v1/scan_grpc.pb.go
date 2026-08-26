@@ -19,11 +19,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ScanPlugin_Capability_FullMethodName    = "/scan.v1.ScanPlugin/Capability"
-	ScanPlugin_Execute_FullMethodName       = "/scan.v1.ScanPlugin/Execute"
-	ScanPlugin_ExecuteStream_FullMethodName = "/scan.v1.ScanPlugin/ExecuteStream"
-	ScanPlugin_Prepare_FullMethodName       = "/scan.v1.ScanPlugin/Prepare"
-	ScanPlugin_Describe_FullMethodName      = "/scan.v1.ScanPlugin/Describe"
+	ScanPlugin_Capability_FullMethodName         = "/scan.v1.ScanPlugin/Capability"
+	ScanPlugin_Execute_FullMethodName            = "/scan.v1.ScanPlugin/Execute"
+	ScanPlugin_ExecuteStream_FullMethodName      = "/scan.v1.ScanPlugin/ExecuteStream"
+	ScanPlugin_Prepare_FullMethodName            = "/scan.v1.ScanPlugin/Prepare"
+	ScanPlugin_Describe_FullMethodName           = "/scan.v1.ScanPlugin/Describe"
+	ScanPlugin_ExecuteBatchStream_FullMethodName = "/scan.v1.ScanPlugin/ExecuteBatchStream"
 )
 
 // ScanPluginClient is the client API for ScanPlugin service.
@@ -45,6 +46,7 @@ type ScanPluginClient interface {
 	ExecuteStream(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteEvent], error)
 	Prepare(ctx context.Context, in *PrepareRequest, opts ...grpc.CallOption) (*PrepareResponse, error)
 	Describe(ctx context.Context, in *DescribeRequest, opts ...grpc.CallOption) (*DescribeResponse, error)
+	ExecuteBatchStream(ctx context.Context, in *BatchExecuteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[BatchExecuteEvent], error)
 }
 
 type scanPluginClient struct {
@@ -114,6 +116,25 @@ func (c *scanPluginClient) Describe(ctx context.Context, in *DescribeRequest, op
 	return out, nil
 }
 
+func (c *scanPluginClient) ExecuteBatchStream(ctx context.Context, in *BatchExecuteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[BatchExecuteEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &ScanPlugin_ServiceDesc.Streams[1], ScanPlugin_ExecuteBatchStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[BatchExecuteRequest, BatchExecuteEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ScanPlugin_ExecuteBatchStreamClient = grpc.ServerStreamingClient[BatchExecuteEvent]
+
 // ScanPluginServer is the server API for ScanPlugin service.
 // All implementations must embed UnimplementedScanPluginServer
 // for forward compatibility.
@@ -133,6 +154,7 @@ type ScanPluginServer interface {
 	ExecuteStream(*ExecuteRequest, grpc.ServerStreamingServer[ExecuteEvent]) error
 	Prepare(context.Context, *PrepareRequest) (*PrepareResponse, error)
 	Describe(context.Context, *DescribeRequest) (*DescribeResponse, error)
+	ExecuteBatchStream(*BatchExecuteRequest, grpc.ServerStreamingServer[BatchExecuteEvent]) error
 	mustEmbedUnimplementedScanPluginServer()
 }
 
@@ -157,6 +179,9 @@ func (UnimplementedScanPluginServer) Prepare(context.Context, *PrepareRequest) (
 }
 func (UnimplementedScanPluginServer) Describe(context.Context, *DescribeRequest) (*DescribeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Describe not implemented")
+}
+func (UnimplementedScanPluginServer) ExecuteBatchStream(*BatchExecuteRequest, grpc.ServerStreamingServer[BatchExecuteEvent]) error {
+	return status.Error(codes.Unimplemented, "method ExecuteBatchStream not implemented")
 }
 func (UnimplementedScanPluginServer) mustEmbedUnimplementedScanPluginServer() {}
 func (UnimplementedScanPluginServer) testEmbeddedByValue()                    {}
@@ -262,6 +287,17 @@ func _ScanPlugin_Describe_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ScanPlugin_ExecuteBatchStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(BatchExecuteRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(ScanPluginServer).ExecuteBatchStream(m, &grpc.GenericServerStream[BatchExecuteRequest, BatchExecuteEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ScanPlugin_ExecuteBatchStreamServer = grpc.ServerStreamingServer[BatchExecuteEvent]
+
 // ScanPlugin_ServiceDesc is the grpc.ServiceDesc for ScanPlugin service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -290,6 +326,11 @@ var ScanPlugin_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ExecuteStream",
 			Handler:       _ScanPlugin_ExecuteStream_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "ExecuteBatchStream",
+			Handler:       _ScanPlugin_ExecuteBatchStream_Handler,
 			ServerStreams: true,
 		},
 	},

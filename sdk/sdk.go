@@ -10,12 +10,14 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"time"
 
 	"github.com/hashicorp/go-plugin"
 	"github.com/trganda/vpt-scanner-plugins/sdk/contract"
+	"github.com/trganda/vpt-scanner-plugins/sdk/runtimeconfig"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -45,6 +47,8 @@ var Handshake = plugin.HandshakeConfig{
 type Target struct {
 	Host   string
 	Params map[string]string
+	// Contract identity is populated by the manifest bridge before mapping.
+	ContractID, ContractDigest string
 }
 
 // Result is the plugin→host scan output. RawJSON is json.Marshal of the tool's
@@ -85,12 +89,32 @@ type Description struct {
 	ContractDigest        string
 	ManifestSHA256        string
 	ProtocolVersion       uint32
+	SupportedContracts    []ContractDescription
+}
+type ContractDescription struct {
+	CanonicalManifestJSON                      []byte
+	ContractID, ContractDigest, ManifestSHA256 string
 }
 
 // Describer is the optional manifest discovery API implemented by GRPCClient.
 type Describer interface {
 	Describe(context.Context) (Description, error)
 }
+
+// BatchScanner is optional and intentionally does not extend Scanner.
+type BatchScanner interface {
+	ExecuteBatch(context.Context, []Target, EventSink) ([]Result, error)
+}
+type BatchContractRequest struct {
+	Targets                    []Target
+	ContractID, ContractDigest string
+}
+type BatchContractResult struct{ Results []ContractResult }
+type BatchContractExecutor interface {
+	ExecuteBatchContract(context.Context, BatchContractRequest, EventSink) (BatchContractResult, error)
+}
+
+const maxBatchTargets = 1024
 
 // Event is a safe, structured progress update. Sequence is local to one
 // ExecuteStream call. Fields are intentionally string-valued and bounded by
@@ -99,6 +123,7 @@ type Describer interface {
 // output and Fields["stream"] with values stdout or stderr.
 type Event struct {
 	Sequence   int64
+	Index      int
 	Level      string
 	Type       string
 	Message    string
@@ -156,13 +181,13 @@ type ManifestOptions struct {
 
 type manifestScannerPlugin struct {
 	plugin.Plugin
-	impl       Scanner
-	descriptor *contract.Descriptor
-	options    ManifestOptions
+	impl        Scanner
+	descriptors []*contract.Descriptor
+	options     ManifestOptions
 }
 
 func (p *manifestScannerPlugin) GRPCServer(_ *plugin.GRPCBroker, s *grpc.Server) error {
-	scanv1.RegisterScanPluginServer(s, &gRPCServer{impl: p.impl, contract: p.descriptor, options: p.options})
+	scanv1.RegisterScanPluginServer(s, &gRPCServer{impl: p.impl, contracts: p.descriptors, options: p.options})
 	return nil
 }
 
@@ -172,9 +197,36 @@ func (p *manifestScannerPlugin) GRPCClient(_ context.Context, _ *plugin.GRPCBrok
 
 // PluginMapWithManifest validates and serves a scanner with a manifest contract.
 func PluginMapWithManifest(impl Scanner, manifest contract.Manifest, opts ManifestOptions) (map[string]plugin.Plugin, error) {
-	d, e := contract.Compile(manifest)
+	return PluginMapWithManifests(impl, manifest, nil, opts)
+}
+func PluginMapWithManifests(impl Scanner, primary contract.Manifest, compatible []contract.Manifest, opts ManifestOptions) (map[string]plugin.Plugin, error) {
+	d, e := contract.Compile(primary)
 	if e != nil {
 		return nil, e
+	}
+	ds := []*contract.Descriptor{d}
+	ids := map[string]bool{d.Manifest().ContractID + "\x00" + d.Digest(): true}
+	for _, raw := range compatible {
+		x, e := contract.Compile(raw)
+		if e != nil {
+			return nil, e
+		}
+		key := x.Manifest().ContractID + "\x00" + x.Digest()
+		if ids[key] {
+			return nil, fmt.Errorf("duplicate contract")
+		}
+		ids[key] = true
+		if x.Manifest().Capability != d.Manifest().Capability {
+			return nil, fmt.Errorf("contract capability mismatch")
+		}
+		xm := x.Manifest()
+		if len(xm.Inputs) != 1 || xm.Inputs[0].Name != "target" || xm.Inputs[0].Cardinality != string(contract.CardinalityOne) {
+			return nil, fmt.Errorf("compatible manifest must declare exactly one target input")
+		}
+		if len(xm.Outputs) > 0 && opts.OutputMapper == nil {
+			return nil, fmt.Errorf("output mapper is required")
+		}
+		ds = append(ds, x)
 	}
 	m := d.Manifest()
 	if len(m.Inputs) != 1 || m.Inputs[0].Name != "target" || m.Inputs[0].Cardinality != string(contract.CardinalityOne) {
@@ -183,7 +235,7 @@ func PluginMapWithManifest(impl Scanner, manifest contract.Manifest, opts Manife
 	if len(d.Manifest().Outputs) > 0 && opts.OutputMapper == nil {
 		return nil, fmt.Errorf("output mapper is required")
 	}
-	return map[string]plugin.Plugin{PluginName: &manifestScannerPlugin{impl: impl, descriptor: d, options: opts}}, nil
+	return map[string]plugin.Plugin{PluginName: &manifestScannerPlugin{impl: impl, descriptors: ds, options: opts}}, nil
 }
 
 // Serve is the plugin entrypoint: a tool's main() builds its Scanner and calls
@@ -205,6 +257,51 @@ func ServeWithManifest(impl Scanner, manifest contract.Manifest, opts ManifestOp
 	}
 	plugin.Serve(&plugin.ServeConfig{HandshakeConfig: Handshake, Plugins: p, GRPCServer: plugin.DefaultGRPCServer})
 	return nil
+}
+func ServeWithManifests(impl Scanner, primary contract.Manifest, compatible []contract.Manifest, opts ManifestOptions) error {
+	p, e := PluginMapWithManifests(impl, primary, compatible, opts)
+	if e != nil {
+		return e
+	}
+	plugin.Serve(&plugin.ServeConfig{HandshakeConfig: Handshake, Plugins: p, GRPCServer: plugin.DefaultGRPCServer})
+	return nil
+}
+func PrintManifestsIfRequested(primary contract.Manifest, compatible []contract.Manifest, runtime *runtimeconfig.Manifest, args []string, stdout io.Writer) (bool, error) {
+	if len(args) != 1 {
+		return false, nil
+	}
+	if args[0] == "--print-manifest" {
+		return PrintManifestIfRequested(primary, args, stdout)
+	}
+	if args[0] == "--print-compatible-contracts" {
+		out := make([]json.RawMessage, 0, len(compatible))
+		for _, m := range compatible {
+			d, err := contract.Compile(m)
+			if err != nil {
+				return true, err
+			}
+			out = append(out, d.CanonicalJSON())
+		}
+		b, err := json.Marshal(out)
+		if err != nil {
+			return true, err
+		}
+		_, err = stdout.Write(b)
+		return true, err
+	}
+	if args[0] == "--print-runtime" {
+		if runtime == nil {
+			_, err := stdout.Write([]byte("null"))
+			return true, err
+		}
+		d, err := runtimeconfig.Compile(*runtime)
+		if err != nil {
+			return true, err
+		}
+		_, err = stdout.Write(d.CanonicalJSON())
+		return true, err
+	}
+	return false, nil
 }
 
 // PrintManifestIfRequested prints canonical manifest bytes for the standalone flag.
@@ -292,12 +389,117 @@ func (m *GRPCClient) Prepare(ctx context.Context, authToken string) error {
 	return err
 }
 
+func (m *GRPCClient) ExecuteBatchContract(ctx context.Context, q BatchContractRequest, sink EventSink) (BatchContractResult, error) {
+	if len(q.Targets) == 0 {
+		return BatchContractResult{}, status.Error(codes.InvalidArgument, "empty batch")
+	}
+	if len(q.Targets) > maxBatchTargets {
+		return BatchContractResult{}, status.Error(codes.InvalidArgument, "batch is too large")
+	}
+	if (q.ContractID == "") != (q.ContractDigest == "") {
+		return BatchContractResult{}, status.Error(codes.InvalidArgument, "contract pins must be supplied together")
+	}
+	if q.ContractID == "" {
+		return BatchContractResult{}, status.Error(codes.FailedPrecondition, "contract pins are required")
+	}
+	if !contract.ValidDigest(q.ContractDigest) {
+		return BatchContractResult{}, status.Error(codes.InvalidArgument, "contract digest is malformed")
+	}
+	for i := 1; i < len(q.Targets); i++ {
+		if !mapsEqual(q.Targets[0].Params, q.Targets[i].Params) {
+			return BatchContractResult{}, status.Error(codes.InvalidArgument, "batch parameters must match")
+		}
+	}
+	st, err := m.client.ExecuteBatchStream(ctx, &scanv1.BatchExecuteRequest{Hosts: func() []string {
+		x := make([]string, len(q.Targets))
+		for i, t := range q.Targets {
+			x[i] = t.Host
+		}
+		return x
+	}(), Params: func() map[string]string {
+		if len(q.Targets) == 0 {
+			return nil
+		}
+		return q.Targets[0].Params
+	}(), ContractId: q.ContractID, ContractDigest: q.ContractDigest})
+	if err != nil {
+		return BatchContractResult{}, err
+	}
+	out := make([]ContractResult, len(q.Targets))
+	nextResult := 0
+	resultsStarted := false
+	for {
+		ev, e := st.Recv()
+		if e == io.EOF {
+			break
+		}
+		if e != nil {
+			return BatchContractResult{}, normalizeCancellation(ctx, e)
+		}
+		if p := ev.GetProgress(); p != nil {
+			if resultsStarted || p.GetIndex() < 0 || int(p.GetIndex()) >= len(out) {
+				return BatchContractResult{}, status.Error(codes.FailedPrecondition, "invalid batch progress")
+			}
+			if sink != nil {
+				occurred := time.Now().UTC()
+				if p.GetOccurredAt() != nil {
+					occurred = p.GetOccurredAt().AsTime()
+				}
+				if e = sink(Event{Sequence: p.Sequence, Index: int(p.Index), Level: p.Level, Type: p.Type, Message: p.Message, Fields: p.Fields, OccurredAt: occurred}); e != nil {
+					return BatchContractResult{}, e
+				}
+			}
+			continue
+		}
+		r := ev.GetResult()
+		if r == nil || int(r.Index) != nextResult || int(r.Index) >= len(out) {
+			return BatchContractResult{}, status.Error(codes.FailedPrecondition, "invalid batch result")
+		}
+		resultsStarted = true
+		cr, e := fromContractProto(r.Result)
+		if e != nil {
+			return BatchContractResult{}, e
+		}
+		if cr.ContractID != q.ContractID || cr.ContractDigest != q.ContractDigest {
+			return BatchContractResult{}, status.Error(codes.FailedPrecondition, "contract pin mismatch")
+		}
+		out[r.Index] = cr
+		nextResult++
+	}
+	if nextResult != len(out) {
+		return BatchContractResult{}, status.Error(codes.FailedPrecondition, "incomplete batch")
+	}
+	return BatchContractResult{Results: out}, nil
+}
+
+func mapsEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
+func normalizeCancellation(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
+}
+
 func (m *GRPCClient) Describe(ctx context.Context) (Description, error) {
 	r, e := m.client.Describe(ctx, &scanv1.DescribeRequest{})
 	if e != nil {
 		return Description{}, e
 	}
-	return Description{Capability: r.GetCapability(), CanonicalManifestJSON: append([]byte(nil), r.GetCanonicalManifestJson()...), ContractID: r.GetContractId(), ContractDigest: r.GetContractDigest(), ManifestSHA256: r.GetManifestSha256(), ProtocolVersion: r.GetProtocolVersion()}, nil
+	d := Description{Capability: r.GetCapability(), CanonicalManifestJSON: append([]byte(nil), r.GetCanonicalManifestJson()...), ContractID: r.GetContractId(), ContractDigest: r.GetContractDigest(), ManifestSHA256: r.GetManifestSha256(), ProtocolVersion: r.GetProtocolVersion()}
+	for _, x := range r.GetSupportedContracts() {
+		d.SupportedContracts = append(d.SupportedContracts, ContractDescription{append([]byte(nil), x.GetCanonicalManifestJson()...), x.GetContractId(), x.GetContractDigest(), x.GetManifestSha256()})
+	}
+	return d, nil
 }
 func (m *GRPCClient) ExecuteContract(ctx context.Context, q ContractRequest) (ContractResult, error) {
 	if (q.ContractID == "") != (q.ContractDigest == "") {
@@ -409,9 +611,9 @@ func fromContractProto(r *scanv1.ExecuteResponse) (ContractResult, error) {
 // gRPCServer is the plugin-side bridge from the proto service to the Scanner.
 type gRPCServer struct {
 	scanv1.UnimplementedScanPluginServer
-	impl     Scanner
-	contract *contract.Descriptor
-	options  ManifestOptions
+	impl      Scanner
+	contracts []*contract.Descriptor
+	options   ManifestOptions
 }
 
 func (m *gRPCServer) Capability(ctx context.Context, _ *scanv1.CapabilityRequest) (*scanv1.CapabilityResponse, error) {
@@ -465,25 +667,37 @@ func (m *gRPCServer) ExecuteStream(req *scanv1.ExecuteRequest, stream scanv1.Sca
 }
 
 func (m *gRPCServer) Describe(context.Context, *scanv1.DescribeRequest) (*scanv1.DescribeResponse, error) {
-	if m.contract == nil {
+	if len(m.contracts) == 0 {
 		return nil, status.Error(codes.Unimplemented, "manifest unavailable")
 	}
-	return &scanv1.DescribeResponse{Capability: m.contract.Manifest().Capability, CanonicalManifestJson: m.contract.CanonicalJSON(), ContractId: m.contract.Manifest().ContractID, ContractDigest: m.contract.Digest(), ManifestSha256: m.contract.ManifestDigest(), ProtocolVersion: ContractProtocolVersion}, nil
+	p := m.contracts[0]
+	r := &scanv1.DescribeResponse{Capability: p.Manifest().Capability, CanonicalManifestJson: p.CanonicalJSON(), ContractId: p.Manifest().ContractID, ContractDigest: p.Digest(), ManifestSha256: p.ManifestDigest(), ProtocolVersion: ContractProtocolVersion}
+	for _, d := range m.contracts {
+		r.SupportedContracts = append(r.SupportedContracts, &scanv1.ContractDescription{CanonicalManifestJson: d.CanonicalJSON(), ContractId: d.Manifest().ContractID, ContractDigest: d.Digest(), ManifestSha256: d.ManifestDigest()})
+	}
+	return r, nil
 }
 func (m *gRPCServer) executeContract(ctx context.Context, req *scanv1.ExecuteRequest, stream bool, sink EventSink) (*scanv1.ExecuteResponse, error) {
 	if (req.GetContractId() == "") != (req.GetContractDigest() == "") {
 		return nil, status.Error(codes.InvalidArgument, "contract pins must be supplied together")
 	}
-	if m.contract == nil {
+	if len(m.contracts) == 0 {
 		return nil, status.Error(codes.FailedPrecondition, "manifest unavailable")
 	}
 	if !contract.ValidDigest(req.GetContractDigest()) {
 		return nil, status.Error(codes.InvalidArgument, "contract digest is malformed")
 	}
-	d := m.contract.Manifest()
-	if req.GetContractId() != d.ContractID || req.GetContractDigest() != m.contract.Digest() {
+	var selected *contract.Descriptor
+	for _, x := range m.contracts {
+		if x.Manifest().ContractID == req.GetContractId() && x.Digest() == req.GetContractDigest() {
+			selected = x
+			break
+		}
+	}
+	if selected == nil {
 		return nil, status.Error(codes.FailedPrecondition, "contract pin mismatch")
 	}
+	d := selected.Manifest()
 	if len(d.Inputs) != 1 || d.Inputs[0].Name != "target" || d.Inputs[0].Cardinality != "one" {
 		return nil, status.Error(codes.FailedPrecondition, "unsupported input contract")
 	}
@@ -521,7 +735,7 @@ func (m *gRPCServer) executeContract(ctx context.Context, req *scanv1.ExecuteReq
 	if e != nil {
 		return nil, status.Error(codes.InvalidArgument, e.Error())
 	}
-	target := Target{Host: canonicalTarget, Params: params}
+	target := Target{Host: canonicalTarget, Params: params, ContractID: d.ContractID, ContractDigest: selected.Digest()}
 	if m.options.TargetMapper != nil {
 		target, e = m.options.TargetMapper(target)
 		if e != nil {
@@ -554,7 +768,7 @@ func (m *gRPCServer) executeContract(ctx context.Context, req *scanv1.ExecuteReq
 	if e != nil {
 		return nil, status.Error(codes.FailedPrecondition, e.Error())
 	}
-	return &scanv1.ExecuteResponse{Capability: res.Capability, RawJson: res.RawJSON, StartedAtUnixNano: res.StartedAtUnixNano, FinishedAtUnixNano: res.FinishedAtUnixNano, Outputs: outputsProto(outs), ContractId: d.ContractID, ContractDigest: m.contract.Digest()}, nil
+	return &scanv1.ExecuteResponse{Capability: res.Capability, RawJson: res.RawJSON, StartedAtUnixNano: res.StartedAtUnixNano, FinishedAtUnixNano: res.FinishedAtUnixNano, Outputs: outputsProto(outs), ContractId: d.ContractID, ContractDigest: selected.Digest()}, nil
 }
 func outputsProto(xs []contract.NamedOutput) []*scanv1.NamedOutput {
 	out := make([]*scanv1.NamedOutput, 0, len(xs))
@@ -600,4 +814,114 @@ func (m *gRPCServer) Prepare(ctx context.Context, req *scanv1.PrepareRequest) (*
 		return nil, err
 	}
 	return &scanv1.PrepareResponse{}, nil
+}
+
+func (m *gRPCServer) ExecuteBatchStream(req *scanv1.BatchExecuteRequest, stream scanv1.ScanPlugin_ExecuteBatchStreamServer) error {
+	bs, ok := m.impl.(BatchScanner)
+	if !ok {
+		return status.Error(codes.Unimplemented, "batch unavailable")
+	}
+	if len(req.Hosts) == 0 {
+		return status.Error(codes.InvalidArgument, "empty batch")
+	}
+	if len(req.Hosts) > maxBatchTargets {
+		return status.Error(codes.InvalidArgument, "batch is too large")
+	}
+	if (req.GetContractId() == "") != (req.GetContractDigest() == "") {
+		return status.Error(codes.InvalidArgument, "contract pins must be supplied together")
+	}
+	if !contract.ValidDigest(req.GetContractDigest()) {
+		return status.Error(codes.InvalidArgument, "contract digest is malformed")
+	}
+	if len(m.contracts) == 0 {
+		return status.Error(codes.FailedPrecondition, "manifest unavailable")
+	}
+	var d *contract.Descriptor
+	for _, x := range m.contracts {
+		if x.Manifest().ContractID == req.ContractId && x.Digest() == req.ContractDigest {
+			d = x
+		}
+	}
+	if d == nil {
+		return status.Error(codes.FailedPrecondition, "contract pin mismatch")
+	}
+	dm := d.Manifest()
+	params, e := contract.NormalizeParameters(&dm, req.Params)
+	if e != nil {
+		return status.Error(codes.InvalidArgument, e.Error())
+	}
+	targets := make([]Target, len(req.Hosts))
+	seenHosts := map[string]bool{}
+	for i, h := range req.Hosts {
+		canonical, e := canonicalTarget(dm.Inputs[0], h)
+		if e != nil {
+			return status.Error(codes.InvalidArgument, "invalid target")
+		}
+		if seenHosts[canonical] {
+			return status.Error(codes.InvalidArgument, "duplicate batch target")
+		}
+		seenHosts[canonical] = true
+		targets[i] = Target{Host: canonical, Params: params, ContractID: dm.ContractID, ContractDigest: d.Digest()}
+		if m.options.TargetMapper != nil {
+			targets[i], e = m.options.TargetMapper(targets[i])
+			if e != nil {
+				return status.Error(codes.InvalidArgument, "target conversion failed")
+			}
+		}
+	}
+	results, e := bs.ExecuteBatch(stream.Context(), targets, func(ev Event) error {
+		if ev.Index < 0 || ev.Index >= len(targets) {
+			return status.Error(codes.FailedPrecondition, "invalid batch progress index")
+		}
+		if ev.OccurredAt.IsZero() {
+			ev.OccurredAt = time.Now().UTC()
+		}
+		return stream.Send(&scanv1.BatchExecuteEvent{Payload: &scanv1.BatchExecuteEvent_Progress{Progress: &scanv1.BatchProgressEvent{Sequence: ev.Sequence, Index: int32(ev.Index), Level: ev.Level, Type: ev.Type, Message: ev.Message, Fields: boundedFields(ev.Fields), OccurredAt: timestamppb.New(ev.OccurredAt)}}})
+	})
+	if e != nil {
+		return e
+	}
+	if len(results) != len(targets) {
+		return status.Error(codes.FailedPrecondition, "invalid batch result count")
+	}
+	for i, r := range results {
+		if r.Capability != dm.Capability {
+			return status.Error(codes.FailedPrecondition, "capability mismatch")
+		}
+		o := []contract.NamedOutput{}
+		if m.options.OutputMapper != nil {
+			o, e = m.options.OutputMapper(targets[i], r)
+			if e != nil {
+				return status.Error(codes.FailedPrecondition, "output conversion failed")
+			}
+		}
+		o, e = contract.ValidateOutputs(dm, o)
+		if e != nil {
+			return status.Error(codes.FailedPrecondition, e.Error())
+		}
+		cr := &scanv1.ExecuteResponse{Capability: r.Capability, RawJson: r.RawJSON, StartedAtUnixNano: r.StartedAtUnixNano, FinishedAtUnixNano: r.FinishedAtUnixNano, Outputs: outputsProto(o), ContractId: dm.ContractID, ContractDigest: d.Digest()}
+		if e = stream.Send(&scanv1.BatchExecuteEvent{Payload: &scanv1.BatchExecuteEvent_Result{Result: &scanv1.BatchExecuteResult{Index: int32(i), Result: cr}}}); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+func canonicalTarget(input contract.Input, raw string) (string, error) {
+	for _, typ := range input.AcceptedTypes {
+		var v contract.Value
+		var err error
+		switch typ {
+		case "domain/v1":
+			v, err = contract.Domain(raw)
+		case "host/v1":
+			v, err = contract.Host(raw)
+		case "url/v1":
+			v, err = contract.URL(raw)
+		}
+		if err == nil {
+			return v.String(), nil
+		}
+	}
+	return "", fmt.Errorf("invalid target")
 }

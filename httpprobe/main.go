@@ -9,20 +9,27 @@ import (
 	"os"
 
 	"github.com/trganda/vpt-scanner-plugins/sdk"
+	"github.com/trganda/vpt-scanner-plugins/sdk/contract"
 )
 
 func pluginOptions() sdk.ManifestOptions { return sdk.ManifestOptions{} }
 
 func main() {
 	m := manifest()
-	if handled, err := sdk.PrintManifestIfRequested(m, os.Args[1:], os.Stdout); handled {
+	runtime := runtimeManifest()
+	if handled, err := sdk.PrintManifestsIfRequested(m, []contract.Manifest{legacyManifest()}, &runtime, os.Args[1:], os.Stdout); handled {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
 	}
-	if err := sdk.ServeWithManifest(newScanner(), m, pluginOptions()); err != nil {
+	s, err := newScanner()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := sdk.ServeWithManifests(s, m, []contract.Manifest{legacyManifest()}, pluginOptions()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

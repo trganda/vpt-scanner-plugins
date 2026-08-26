@@ -21,6 +21,7 @@ service ScanPlugin {
   rpc ExecuteStream(ExecuteRequest) returns (stream ExecuteEvent);
   rpc Prepare(PrepareRequest) returns (PrepareResponse);
   rpc Describe(DescribeRequest) returns (DescribeResponse);
+  rpc ExecuteBatchStream(BatchExecuteRequest) returns (stream BatchExecuteEvent);
 }
 
 message CapabilityRequest {}
@@ -69,7 +70,26 @@ message DescribeResponse {
   string contract_digest = 4;
   string manifest_sha256 = 5;
   uint32 protocol_version = 6;
+  repeated ContractDescription supported_contracts = 7;
 }
+message ContractDescription {
+  bytes canonical_manifest_json = 1;
+  string contract_id = 2;
+  string contract_digest = 3;
+  string manifest_sha256 = 4;
+}
+
+message BatchExecuteRequest {
+  repeated string hosts = 1;
+  map<string,string> params = 2;
+  string contract_id = 3;
+  string contract_digest = 4;
+}
+message BatchExecuteEvent {
+  oneof payload { BatchProgressEvent progress = 1; BatchExecuteResult result = 2; }
+}
+message BatchProgressEvent { int64 sequence = 1; int32 index = 2; string level = 3; string type = 4; string message = 5; map<string,string> fields = 6; google.protobuf.Timestamp occurred_at = 7; }
+message BatchExecuteResult { int32 index = 1; ExecuteResponse result = 2; }
 
 // ExecuteEvent is either a progress event or the terminal result. Exactly one
 // payload is set. Events contain only bounded, deliberately structured fields;

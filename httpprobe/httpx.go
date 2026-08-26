@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +17,8 @@ import (
 	customport "github.com/projectdiscovery/httpx/common/customports"
 	"github.com/projectdiscovery/httpx/runner"
 	"github.com/projectdiscovery/tlsx/pkg/tlsx/clients"
+	"github.com/trganda/vpt-scanner-plugins/sdk"
+	"github.com/trganda/vpt-scanner-plugins/sdk/contract"
 )
 
 // maxBodyBytes caps the response body httpx reads and saves per probe. The
@@ -72,7 +76,7 @@ type ProbeResult struct {
 // prober is the port the scanner depends on. The httpx-backed implementation
 // lives below; tests inject a fake.
 type prober interface {
-	Probe(ctx context.Context, host, ports string) ([]ProbeResult, error)
+	ProbeBatch(context.Context, []sdk.Target) ([]sdk.Result, error)
 }
 
 // httpxProber wraps the projectdiscovery httpx SDK. The underlying runner is
@@ -80,6 +84,8 @@ type prober interface {
 type httpxProber struct {
 	opts Options
 }
+
+func (h *httpxProber) Options() Options { return h.opts }
 
 type httpxRunner interface {
 	RunEnumeration()
@@ -108,10 +114,73 @@ func newHTTPXProber(opts Options) (*httpxProber, error) {
 // (host, ports) pair, runs the enumeration, and collects per-URL results from
 // the OnResult callback.
 func (h *httpxProber) Probe(ctx context.Context, host, ports string) ([]ProbeResult, error) {
+	r, err := h.ProbeBatch(ctx, []sdk.Target{{Host: host, Params: map[string]string{"ports": ports}}})
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Probes []ProbeResult `json:"probes"`
+	}
+	if len(r) > 0 {
+		if err := json.Unmarshal(r[0].RawJSON, &out); err != nil {
+			return nil, err
+		}
+	}
+	return out.Probes, nil
+}
+
+func (h *httpxProber) ProbeBatch(ctx context.Context, targets []sdk.Target) ([]sdk.Result, error) {
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("httpprobe: empty batch")
+	}
+	hosts := make([]string, len(targets))
+	ports := "80,443"
+	first := targets[0]
+	primary := first.ContractDigest != "" && first.ContractDigest == primaryManifestDigest()
+	opts := executionOptions(h.opts, first.Params, primary)
+	if p := first.Params["ports"]; p != "" {
+		ports = p
+	}
+	for i, t := range targets {
+		hosts[i] = t.Host
+		if !sameParams(first.Params, t.Params) || t.ContractID != first.ContractID || t.ContractDigest != first.ContractDigest {
+			return nil, fmt.Errorf("httpprobe: batch targets must share parameters and contract")
+		}
+	}
+	return h.probeBatch(ctx, hosts, ports, opts)
+}
+
+func primaryManifestDigest() string {
+	d, err := contract.Compile(manifest())
+	if err != nil {
+		panic(err)
+	}
+	return d.Digest()
+}
+
+func sameParams(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *httpxProber) probeBatch(ctx context.Context, hosts []string, ports string, opts Options) ([]sdk.Result, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-httpxGlobalGate:
+	}
+	start := time.Now()
+	if opts.MaxRunTime > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, opts.MaxRunTime)
+		defer cancel()
 	}
 	var gateReleased sync.Once
 	releaseGate := func() {
@@ -128,18 +197,22 @@ func (h *httpxProber) Probe(ctx context.Context, host, ports string) ([]ProbeRes
 	}
 
 	var (
-		mu      sync.Mutex
-		results []ProbeResult
+		mu         sync.Mutex
+		results    = map[string][]ProbeResult{}
+		unexpected string
 	)
+	for _, host := range hosts {
+		results[host] = []ProbeResult{}
+	}
 
 	rOpts := &runner.Options{
-		InputTargetHost:    goflags.StringSlice{host},
+		InputTargetHost:    goflags.StringSlice(hosts),
 		CustomPorts:        cp,
-		Threads:            h.opts.Threads,
-		Timeout:            int(h.opts.Timeout / time.Second),
-		FollowRedirects:    h.opts.FollowRedirects,
-		TechDetect:         h.opts.TechDetect,
-		Methods:            strings.Join(h.opts.Methods, ","),
+		Threads:            opts.Threads,
+		Timeout:            int(opts.Timeout / time.Second),
+		FollowRedirects:    opts.FollowRedirects,
+		TechDetect:         opts.TechDetect,
+		Methods:            strings.Join(opts.Methods, ","),
 		Silent:             true,
 		NoColor:            true,
 		DisableUpdateCheck: true,
@@ -159,8 +232,8 @@ func (h *httpxProber) Probe(ctx context.Context, host, ports string) ([]ProbeRes
 		MaxResponseBodySizeToRead: maxBodyBytes,
 		MaxResponseBodySizeToSave: maxBodyBytes,
 
-		Asn:      h.opts.ASN,
-		PdcpAuth: h.opts.PdcpAPIKey,
+		Asn:      opts.ASN,
+		PdcpAuth: opts.PdcpAPIKey,
 
 		OnResult: func(r runner.Result) {
 			if r.Err != nil || r.Failed {
@@ -168,6 +241,10 @@ func (h *httpxProber) Probe(ctx context.Context, host, ports string) ([]ProbeRes
 			}
 			mu.Lock()
 			defer mu.Unlock()
+			if _, ok := results[r.Input]; !ok {
+				unexpected = r.Input
+				return
+			}
 			var body string
 			if r.ResponseBody != "" {
 				raw := r.ResponseBody
@@ -184,7 +261,7 @@ func (h *httpxProber) Probe(ctx context.Context, host, ports string) ([]ProbeRes
 				asnCountry = r.ASN.AsCountry
 				asnRange = append([]string(nil), r.ASN.AsRange...)
 			}
-			results = append(results, ProbeResult{
+			results[r.Input] = append(results[r.Input], ProbeResult{
 				URL:             r.URL,
 				Scheme:          r.Scheme,
 				StatusCode:      r.StatusCode,
@@ -241,8 +318,22 @@ func (h *httpxProber) Probe(ctx context.Context, host, ports string) ([]ProbeRes
 		return nil, ctx.Err()
 	case <-done:
 	}
+	if unexpected != "" {
+		return nil, fmt.Errorf("httpprobe: result for unexpected input %q", unexpected)
+	}
 
-	return results, nil
+	finished := time.Now().UnixNano()
+	out := make([]sdk.Result, len(hosts))
+	for i, host := range hosts {
+		probes := results[host]
+		sort.SliceStable(probes, func(i, j int) bool { return probes[i].URL < probes[j].URL })
+		raw, err := json.Marshal(map[string]any{"host": host, "probes": probes, "count": len(probes)})
+		if err != nil {
+			return nil, err
+		}
+		out[i] = sdk.Result{Capability: "httpprobe", RawJSON: raw, StartedAtUnixNano: start.UnixNano(), FinishedAtUnixNano: finished}
+	}
+	return out, nil
 }
 
 // mapTLS distils httpx's TLS-grab output (tlsx clients.Response) into the

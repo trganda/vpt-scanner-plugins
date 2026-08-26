@@ -31,6 +31,12 @@ contract-bearing execution are optional interfaces exposed by the SDK client.
 The `--print-manifest` helper emits the same canonical bytes returned by
 `Describe` without initializing a scanner tool.
 
+Plugins may advertise compatible canonical manifests with
+`ServeWithManifests`; contract requests select and echo an exact contract
+digest. Optional `BatchScanner` implementations use the additive batch stream
+without changing the `Scanner` source contract. Release tooling also emits
+`*_compatible_contracts.json` and `*_runtime.json` assets.
+
 ## Releases
 
 Plugins can be released independently using `plugin-<capability>-vX.Y.Z` tags,
