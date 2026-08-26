@@ -173,7 +173,7 @@ jobs:
                sem = json.dumps(semantic, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
                print(f"{p}: semantic_sha256=sha256:{hashlib.sha256(sem).hexdigest()} manifest_sha256=sha256:{hashlib.sha256(raw).hexdigest()}")
            PY
-           sha256sum ./*_linux_* ./*_contract.json > subjects.txt
+           sha256sum -- *_linux_* *_contract.json > subjects.txt
            echo "subjects=$(base64 -w0 subjects.txt)" >> "$GITHUB_OUTPUT"
       - name: Upload release assets
         env:
