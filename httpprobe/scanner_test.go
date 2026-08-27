@@ -20,14 +20,16 @@ type fakeProber struct {
 	calls    int
 	gotHost  string
 	gotPorts string
+	gotOpts  probeOptions
 	block    bool
 	started  chan struct{}
 }
 
-func (f *fakeProber) Probe(ctx context.Context, host, ports string) ([]ProbeResult, error) {
+func (f *fakeProber) Probe(ctx context.Context, host, ports string, opts probeOptions) ([]ProbeResult, error) {
 	f.calls++
 	f.gotHost = host
 	f.gotPorts = ports
+	f.gotOpts = opts
 	if f.block {
 		if f.started != nil {
 			close(f.started)
@@ -91,6 +93,26 @@ var _ = Describe("scanner", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fake2.gotHost).To(Equal("example.com"))
 		Expect(fake2.gotPorts).To(Equal("8080,8443"))
+	})
+
+	It("applies per-step probing options", func() {
+		fake := &fakeProber{}
+		s := newWithProber(fake, 0)
+		_, err := s.Execute(context.Background(), sdk.Target{Host: "example.com", Params: map[string]string{
+			"threads":          "11",
+			"timeout_seconds":  "9",
+			"methods":          "GET, POST",
+			"follow_redirects": "false",
+			"tech_detect":      "false",
+			"asn":              "true",
+		}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.gotOpts.Threads).To(Equal(11))
+		Expect(fake.gotOpts.Timeout).To(Equal(9 * time.Second))
+		Expect(fake.gotOpts.Methods).To(Equal([]string{"GET", "POST"}))
+		Expect(fake.gotOpts.FollowRedirects).To(BeFalse())
+		Expect(fake.gotOpts.TechDetect).To(BeFalse())
+		Expect(fake.gotOpts.ASN).To(BeTrue())
 	})
 
 	It("rejects an empty host without probing", func() {

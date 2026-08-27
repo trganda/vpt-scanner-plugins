@@ -25,13 +25,26 @@ type Finding struct {
 // enumerator is the port the scanner depends on. The subfinder-backed
 // implementation lives below; tests inject a fake.
 type enumerator interface {
-	Enumerate(ctx context.Context, domain string, stdout, stderr io.Writer) ([]Finding, error)
+	Enumerate(ctx context.Context, domain string, opts enumerateOptions, stdout, stderr io.Writer) ([]Finding, error)
+}
+
+// enumerateOptions carries per-call enumeration tuning. All fields are fully
+// resolved by the scanner from process defaults plus step params, so the
+// enumerator can apply them directly without merging.
+type enumerateOptions struct {
+	Threads        int
+	Timeout        time.Duration
+	MaxRunTime     time.Duration
+	AllSources     bool
+	Sources        []string
+	ExcludeSources []string
+	Resolvers      []string
 }
 
 // subfinderEnumerator wraps subfinder's runner so the scanner depends only on
 // the enumerator port and not on the SDK directly.
 type subfinderEnumerator struct {
-	runner subfinderRunner
+	providerConfig string
 }
 
 type subfinderRunner interface {
@@ -42,11 +55,22 @@ var newSubfinderRunner = func(opts *runner.Options) (subfinderRunner, error) {
 	return runner.NewRunner(opts)
 }
 
-// newSubfinderEnumerator constructs the underlying subfinder runner. We
+// newSubfinderEnumerator validates the process-level provider config once so a
+// malformed provider config is reported from newScanner rather than on the first
+// scan. The runner itself is rebuilt per call so per-step sources/resolvers/
+// timeouts can differ between steps.
+func newSubfinderEnumerator(cfg config) (*subfinderEnumerator, error) {
+	if _, err := buildSubfinderRunner(cfg); err != nil {
+		return nil, fmt.Errorf("subdomain: build subfinder runner: %w", err)
+	}
+	return &subfinderEnumerator{providerConfig: cfg.ProviderConfig}, nil
+}
+
+// buildSubfinderRunner constructs the underlying subfinder runner. We
 // deliberately build a runner.Options literal (rather than calling
 // runner.ParseOptions) to avoid version-check HTTP calls, banner output, and
 // os.Exit on bad flags — none of which belong inside a library boot path.
-func newSubfinderEnumerator(cfg config) (*subfinderEnumerator, error) {
+func buildSubfinderRunner(cfg config) (subfinderRunner, error) {
 	rOpts := &runner.Options{
 		Threads:            cfg.Threads,
 		Timeout:            int(cfg.Timeout / time.Second),
@@ -61,12 +85,7 @@ func newSubfinderEnumerator(cfg config) (*subfinderEnumerator, error) {
 		Output:             io.Discard,
 		DisableUpdateCheck: true,
 	}
-
-	r, err := newSubfinderRunner(rOpts)
-	if err != nil {
-		return nil, fmt.Errorf("subdomain: build subfinder runner: %w", err)
-	}
-	return &subfinderEnumerator{runner: r}, nil
+	return newSubfinderRunner(rOpts)
 }
 
 // Enumerate runs a single passive enumeration pass against domain. It uses
@@ -89,7 +108,22 @@ func (w *gologgerWriter) Write(data []byte, level levels.Level) {
 	_, _ = w.dst.Write(data)
 }
 
-func (s *subfinderEnumerator) Enumerate(ctx context.Context, domain string, stdout, stderr io.Writer) ([]Finding, error) {
+func (s *subfinderEnumerator) Enumerate(ctx context.Context, domain string, opts enumerateOptions, stdout, stderr io.Writer) ([]Finding, error) {
+	cfg := config{
+		Threads:        opts.Threads,
+		Timeout:        opts.Timeout,
+		MaxRunTime:     opts.MaxRunTime,
+		AllSources:     opts.AllSources,
+		Sources:        append([]string(nil), opts.Sources...),
+		ExcludeSources: append([]string(nil), opts.ExcludeSources...),
+		Resolvers:      append([]string(nil), opts.Resolvers...),
+		ProviderConfig: s.providerConfig,
+	}
+	r, err := buildSubfinderRunner(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("subdomain: build subfinder runner: %w", err)
+	}
+
 	var buf bytes.Buffer
 	if stdout == nil {
 		stdout = io.Discard
@@ -106,7 +140,7 @@ func (s *subfinderEnumerator) Enumerate(ctx context.Context, domain string, stdo
 		gologger.DefaultLogger.SetWriter(writer.NewCLI())
 		gologgerMu.Unlock()
 	}()
-	sourceMap, err := s.runner.EnumerateSingleDomainWithCtx(ctx, domain, []io.Writer{io.MultiWriter(&buf, stdout)})
+	sourceMap, err := r.EnumerateSingleDomainWithCtx(ctx, domain, []io.Writer{io.MultiWriter(&buf, stdout)})
 	if err != nil {
 		return nil, fmt.Errorf("subdomain: subfinder enumerate %q: %w", domain, err)
 	}

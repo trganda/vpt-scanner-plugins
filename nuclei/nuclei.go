@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +47,11 @@ func (n *nucleiEngine) Scan(ctx context.Context, target string, params map[strin
 	templateDir := filepath.Join(n.cfg.TemplateDir, "templates")
 	workflowDir := filepath.Join(n.cfg.TemplateDir, "workflows")
 
+	templateConcurrency := intParam(params, "template_concurrency", n.cfg.TemplateConcurrency)
+	hostConcurrency := intParam(params, "host_concurrency", n.cfg.HostConcurrency)
+	networkTimeout := intParam(params, "network_timeout", n.cfg.NetworkTimeout)
+	networkRetries := intParam(params, "network_retries", n.cfg.NetworkRetries)
+
 	ne, err := newNucleiRunner(ctx,
 		nuclei.WithTemplatesOrWorkflows(nuclei.TemplateSources{
 			Templates: []string{templateDir},
@@ -53,8 +59,8 @@ func (n *nucleiEngine) Scan(ctx context.Context, target string, params map[strin
 		}),
 		nuclei.WithTemplateFilters(filtersFromParams(params)),
 		nuclei.WithConcurrency(nuclei.Concurrency{
-			TemplateConcurrency:           n.cfg.TemplateConcurrency,
-			HostConcurrency:               n.cfg.HostConcurrency,
+			TemplateConcurrency:           templateConcurrency,
+			HostConcurrency:               hostConcurrency,
 			HeadlessHostConcurrency:       1,
 			HeadlessTemplateConcurrency:   1,
 			JavascriptTemplateConcurrency: 1,
@@ -62,8 +68,8 @@ func (n *nucleiEngine) Scan(ctx context.Context, target string, params map[strin
 			ProbeConcurrency:              50,
 		}),
 		nuclei.WithNetworkConfig(nuclei.NetworkConfig{
-			Timeout: n.cfg.NetworkTimeout,
-			Retries: n.cfg.NetworkRetries,
+			Timeout: networkTimeout,
+			Retries: networkRetries,
 		}),
 	)
 	if err != nil {
@@ -99,15 +105,36 @@ func (n *nucleiEngine) Scan(ctx context.Context, target string, params map[strin
 func filtersFromParams(params map[string]string) nuclei.TemplateFilters {
 	f := nuclei.TemplateFilters{}
 	if tags := params["tags"]; tags != "" {
-		f.Tags = strings.Split(tags, ",")
+		f.Tags = splitList(tags)
 	}
 	if sev := params["severity"]; sev != "" {
 		f.Severity = sev
 	}
 	if ids := params["ids"]; ids != "" {
-		f.IDs = strings.Split(ids, ",")
+		f.IDs = splitList(ids)
 	}
 	return f
+}
+
+func splitList(v string) []string {
+	var out []string
+	for _, item := range strings.Split(v, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// intParam returns a per-step integer parameter or the process-level default.
+func intParam(params map[string]string, name string, def int) int {
+	if v, ok := params[name]; ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
 }
 
 // convertEvent maps a nuclei ResultEvent to our Finding type.

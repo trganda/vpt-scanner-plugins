@@ -62,9 +62,16 @@ func (s *scanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.Even
 	}
 
 	// Per-call timeout cap, layered under the workflow's StartToCloseTimeout.
-	if s.timeout > 0 {
+	// A step may override the default via Params["timeout_seconds"].
+	timeout := s.timeout
+	if v, ok := t.Params["timeout_seconds"]; ok && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			timeout = time.Duration(n) * time.Second
+		}
+	}
+	if timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, s.timeout)
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 

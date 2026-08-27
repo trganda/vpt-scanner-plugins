@@ -72,7 +72,19 @@ type ProbeResult struct {
 // prober is the port the scanner depends on. The httpx-backed implementation
 // lives below; tests inject a fake.
 type prober interface {
-	Probe(ctx context.Context, host, ports string) ([]ProbeResult, error)
+	Probe(ctx context.Context, host, ports string, opts probeOptions) ([]ProbeResult, error)
+}
+
+// probeOptions carries per-call HTTP probing tuning. All fields are fully
+// resolved by the scanner from process defaults plus step params; secrets such
+// as the PDCP API key intentionally remain process-level only.
+type probeOptions struct {
+	Threads         int
+	Timeout         time.Duration
+	FollowRedirects bool
+	TechDetect      bool
+	Methods         []string
+	ASN             bool
 }
 
 // httpxProber wraps the projectdiscovery httpx SDK. The underlying runner is
@@ -106,8 +118,9 @@ func newHTTPXProber(opts Options) (*httpxProber, error) {
 
 // Probe fans the configured options into a fresh runner.Options for this
 // (host, ports) pair, runs the enumeration, and collects per-URL results from
-// the OnResult callback.
-func (h *httpxProber) Probe(ctx context.Context, host, ports string) ([]ProbeResult, error) {
+// the OnResult callback. Per-call overrides are layered over the process-level
+// defaults held by the prober; the PDCP API key always stays process-level.
+func (h *httpxProber) Probe(ctx context.Context, host, ports string, o probeOptions) ([]ProbeResult, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -117,6 +130,14 @@ func (h *httpxProber) Probe(ctx context.Context, host, ports string) ([]ProbeRes
 	releaseGate := func() {
 		gateReleased.Do(func() { httpxGlobalGate <- struct{}{} })
 	}
+
+	opts := h.opts
+	opts.Threads = o.Threads
+	opts.Timeout = o.Timeout
+	opts.FollowRedirects = o.FollowRedirects
+	opts.TechDetect = o.TechDetect
+	opts.ASN = o.ASN
+	opts.Methods = append([]string(nil), o.Methods...)
 
 	// Reset the global before populating it so we don't see ports from a prior
 	// caller. CustomPorts.Set() merges into customport.Ports.
@@ -135,11 +156,11 @@ func (h *httpxProber) Probe(ctx context.Context, host, ports string) ([]ProbeRes
 	rOpts := &runner.Options{
 		InputTargetHost:    goflags.StringSlice{host},
 		CustomPorts:        cp,
-		Threads:            h.opts.Threads,
-		Timeout:            int(h.opts.Timeout / time.Second),
-		FollowRedirects:    h.opts.FollowRedirects,
-		TechDetect:         h.opts.TechDetect,
-		Methods:            strings.Join(h.opts.Methods, ","),
+		Threads:            opts.Threads,
+		Timeout:            int(opts.Timeout / time.Second),
+		FollowRedirects:    opts.FollowRedirects,
+		TechDetect:         opts.TechDetect,
+		Methods:            strings.Join(opts.Methods, ","),
 		Silent:             true,
 		NoColor:            true,
 		DisableUpdateCheck: true,
@@ -159,8 +180,8 @@ func (h *httpxProber) Probe(ctx context.Context, host, ports string) ([]ProbeRes
 		MaxResponseBodySizeToRead: maxBodyBytes,
 		MaxResponseBodySizeToSave: maxBodyBytes,
 
-		Asn:      h.opts.ASN,
-		PdcpAuth: h.opts.PdcpAPIKey,
+		Asn:      opts.ASN,
+		PdcpAuth: opts.PdcpAPIKey,
 
 		OnResult: func(r runner.Result) {
 			if r.Err != nil || r.Failed {

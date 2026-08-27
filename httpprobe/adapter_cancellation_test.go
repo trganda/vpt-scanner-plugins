@@ -51,7 +51,7 @@ func TestHTTPXAdapterCancellationWaitsForImmediateUnwind(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { _, err := (&httpxProber{}).Probe(ctx, "example.com", "80"); done <- err }()
+	go func() { _, err := (&httpxProber{}).Probe(ctx, "example.com", "80", probeOptions{}); done <- err }()
 	<-fake.started
 	cancel()
 	fake.releaseEnumeration()
@@ -82,7 +82,7 @@ func TestHTTPXAdapterCancellationWaitsForDelayedUnwind(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { _, err := (&httpxProber{}).Probe(ctx, "example.com", "80"); done <- err }()
+	go func() { _, err := (&httpxProber{}).Probe(ctx, "example.com", "80", probeOptions{}); done <- err }()
 	<-fake.started
 	cancel()
 	select {
@@ -107,7 +107,7 @@ func TestHTTPXAdapterCancellationReturnsAfterGraceForStalledRunner(t *testing.T)
 	t.Cleanup(fake.releaseEnumeration)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { _, err := (&httpxProber{}).Probe(ctx, "example.com", "80"); done <- err }()
+	go func() { _, err := (&httpxProber{}).Probe(ctx, "example.com", "80", probeOptions{}); done <- err }()
 	<-fake.started
 	start := time.Now()
 	cancel()
@@ -138,7 +138,7 @@ func TestHTTPXAdapterCancelledCallDoesNotWaitForStalledGate(t *testing.T) {
 	t.Cleanup(first.releaseEnumeration)
 	firstDone := make(chan error, 1)
 	go func() {
-		_, err := (&httpxProber{}).Probe(context.Background(), "first.example", "80")
+		_, err := (&httpxProber{}).Probe(context.Background(), "first.example", "80", probeOptions{})
 		firstDone <- err
 	}()
 	<-first.started
@@ -146,7 +146,7 @@ func TestHTTPXAdapterCancelledCallDoesNotWaitForStalledGate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	start := time.Now()
-	_, err := (&httpxProber{}).Probe(ctx, "second.example", "80")
+	_, err := (&httpxProber{}).Probe(ctx, "second.example", "80", probeOptions{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v", err)
 	}

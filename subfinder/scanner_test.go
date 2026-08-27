@@ -17,14 +17,16 @@ type fakeEnum struct {
 	err      error
 	calls    int
 	gotHost  string
+	gotOpts  enumerateOptions
 	block    bool
 	write    func(io.Writer, io.Writer)
 	started  chan struct{}
 }
 
-func (f *fakeEnum) Enumerate(ctx context.Context, domain string, stdout, stderr io.Writer) ([]Finding, error) {
+func (f *fakeEnum) Enumerate(ctx context.Context, domain string, opts enumerateOptions, stdout, stderr io.Writer) ([]Finding, error) {
 	f.calls++
 	f.gotHost = domain
+	f.gotOpts = opts
 	if f.block {
 		if f.started != nil {
 			close(f.started)
@@ -102,6 +104,28 @@ var _ = Describe("scanner", func() {
 		_, err := newWithEnumerator(fake, 0).Execute(context.Background(), sdk.Target{Host: "  example.com  "})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fake.gotHost).To(Equal("example.com"))
+	})
+
+	It("applies per-step enumeration options", func() {
+		fake := &fakeEnum{findings: []Finding{{Host: "a.example.com", Source: "crtsh"}}}
+		s := newWithEnumerator(fake, 30*time.Second)
+		_, err := s.Execute(context.Background(), sdk.Target{Host: "example.com", Params: map[string]string{
+			"threads":              "42",
+			"timeout_seconds":      "7",
+			"max_run_time_seconds": "90",
+			"all_sources":          "true",
+			"sources":              "crtsh, hackertarget",
+			"exclude_sources":      "wayback",
+			"resolvers":            "1.1.1.1",
+		}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.gotOpts.Threads).To(Equal(42))
+		Expect(fake.gotOpts.Timeout).To(Equal(7 * time.Second))
+		Expect(fake.gotOpts.MaxRunTime).To(Equal(90 * time.Second))
+		Expect(fake.gotOpts.AllSources).To(BeTrue())
+		Expect(fake.gotOpts.Sources).To(Equal([]string{"crtsh", "hackertarget"}))
+		Expect(fake.gotOpts.ExcludeSources).To(Equal([]string{"wayback"}))
+		Expect(fake.gotOpts.Resolvers).To(Equal([]string{"1.1.1.1"}))
 	})
 
 	It("rejects an empty host", func() {

@@ -20,6 +20,7 @@ const capability = "subdomain"
 type scanner struct {
 	enum    enumerator
 	initErr error // deferred construction error, surfaced from Execute
+	cfg     config
 	timeout time.Duration
 }
 
@@ -33,7 +34,7 @@ func newScanner() *scanner {
 		return &scanner{initErr: err}
 	}
 	enum, err := newSubfinderEnumerator(cfg)
-	return &scanner{enum: enum, initErr: err, timeout: cfg.MaxRunTime}
+	return &scanner{enum: enum, initErr: err, cfg: cfg, timeout: cfg.MaxRunTime}
 }
 
 // newWithEnumerator is the test seam.
@@ -74,9 +75,10 @@ func (s *scanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.Even
 		return sdk.Result{}, errors.New("subdomain: empty target host")
 	}
 
-	if s.timeout > 0 {
+	opts := enumerateOptionsFromParams(t.Params, s.cfg, s.timeout)
+	if opts.MaxRunTime > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, s.timeout)
+		ctx, cancel = context.WithTimeout(ctx, opts.MaxRunTime)
 		defer cancel()
 	}
 
@@ -86,7 +88,7 @@ func (s *scanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.Even
 	stderr := &lineWriter{level: "info", emitLevel: func(line, level string) error {
 		return emit(level, "log", line, map[string]string{"stream": "stderr", "line": line})
 	}}
-	findings, err := s.enum.Enumerate(ctx, domain, stdout, stderr)
+	findings, err := s.enum.Enumerate(ctx, domain, opts, stdout, stderr)
 	if flushErr := stdout.Flush(); err == nil {
 		err = flushErr
 	}
@@ -193,3 +195,56 @@ func gologgerLevel(level levels.Level) string {
 }
 
 var _ sdk.Scanner = (*scanner)(nil)
+
+// enumerateOptionsFromParams resolves one call's enumeration tuning by applying
+// step params over the process-level defaults from the environment.
+func enumerateOptionsFromParams(params map[string]string, cfg config, timeoutDefault time.Duration) enumerateOptions {
+	o := enumerateOptions{
+		Threads:        cfg.Threads,
+		Timeout:        cfg.Timeout,
+		MaxRunTime:     timeoutDefault,
+		AllSources:     cfg.AllSources,
+		Sources:        append([]string(nil), cfg.Sources...),
+		ExcludeSources: append([]string(nil), cfg.ExcludeSources...),
+		Resolvers:      append([]string(nil), cfg.Resolvers...),
+	}
+	if v, ok := params["threads"]; ok {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			o.Threads = n
+		}
+	}
+	if v, ok := params["timeout_seconds"]; ok {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			o.Timeout = time.Duration(n) * time.Second
+		}
+	}
+	if v, ok := params["max_run_time_seconds"]; ok {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			o.MaxRunTime = time.Duration(n) * time.Second
+		}
+	}
+	if v, ok := params["all_sources"]; ok {
+		o.AllSources = v == "true"
+	}
+	if v, ok := params["sources"]; ok {
+		o.Sources = splitList(v)
+	}
+	if v, ok := params["exclude_sources"]; ok {
+		o.ExcludeSources = splitList(v)
+	}
+	if v, ok := params["resolvers"]; ok {
+		o.Resolvers = splitList(v)
+	}
+	return o
+}
+
+func splitList(v string) []string {
+	var out []string
+	for _, item := range strings.Split(v, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}

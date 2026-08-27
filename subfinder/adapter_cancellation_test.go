@@ -24,10 +24,10 @@ func TestSubfinderAdapterPassesCancellation(t *testing.T) {
 	fake := &cancellationSubfinderRunner{started: make(chan struct{})}
 	newSubfinderRunner = func(*runner.Options) (subfinderRunner, error) { return fake, nil }
 
-	e := &subfinderEnumerator{runner: fake}
+	e := &subfinderEnumerator{providerConfig: ""}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { _, err := e.Enumerate(ctx, "example.com", nil, nil); done <- err }()
+	go func() { _, err := e.Enumerate(ctx, "example.com", enumerateOptions{}, nil, nil); done <- err }()
 	<-fake.started
 	cancel()
 	select {

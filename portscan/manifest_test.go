@@ -11,7 +11,7 @@ import (
 func TestManifest(t *testing.T) {
 	m := manifest()
 	d, err := contract.Compile(m)
-	if err != nil || d.Manifest().ContractID != "vpt/portscan/v1" || d.Digest() != "sha256:d66d188d487aa75d7c7cd8243124f8646f417169a6d3f02a7eddfc586610ef3c" || d.ManifestDigest() != "sha256:055e08e21ea85b528d00cb588ab889c0eba239862ca9bb6898006cf3d2ece8a8" {
+	if err != nil || d.Manifest().ContractID != "vpt/portscan/v1" || d.Digest() != "sha256:f97be3931229c807a0904eafb3f56b3974f7a771e676bb012422f25c129d6540" || d.ManifestDigest() != "sha256:6c810d11b14520ca2d2d9df56099959cc5647862740d872766aeb20a01c22172" {
 		t.Fatalf("manifest: %v", err)
 	}
 	var out bytes.Buffer
