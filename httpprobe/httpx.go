@@ -22,18 +22,76 @@ import (
 // the result payload stays small and binary-safe.
 const maxBodyBytes = 64 * 1024
 
-// httpxGlobalGate serialises Probe() calls across the whole process. httpx stores
-// its custom-port set in a package-level map (customport.Ports) which the
-// runner reads during enumeration — two concurrent Probe() calls would race on
-// that map. In a single-tool plugin process this is rarely contended, but the
-// guard is kept since the global is httpx-internal. A channel is used instead
-// of a mutex so cancellation can avoid waiting behind a runner that is still
-// unwinding.
-var httpxGlobalGate = func() chan struct{} {
-	gate := make(chan struct{}, 1)
-	gate <- struct{}{}
-	return gate
-}()
+// portSetGate serialises probes only while the active custom port set changes.
+// httpx reads the package-level customport.Ports map during enumeration, so
+// probes that share the current port set may run concurrently (read-only use of
+// the map), while a probe with a different port set waits until the active set
+// is idle before reloading the global map. The wait is context-aware so
+// cancellation never blocks behind a stalled probe.
+type portSetGate struct {
+	mu     sync.Mutex
+	active string
+	refs   int
+	idle   chan struct{}
+}
+
+func newPortSetGate() *portSetGate {
+	g := &portSetGate{}
+	g.idle = make(chan struct{})
+	close(g.idle)
+	return g
+}
+
+var httpxPortSetGate = newPortSetGate()
+
+// acquire loads ports into customport.Ports when necessary and returns a
+// release func. Concurrent callers with the same ports share the loaded map;
+// callers with a different ports value wait for the active set to drain.
+func (g *portSetGate) acquire(ctx context.Context, ports string) (func(), error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		g.mu.Lock()
+		if g.refs == 0 {
+			customport.Ports = map[int]string{}
+			cp := customport.CustomPorts{}
+			if err := cp.Set(ports); err != nil {
+				g.mu.Unlock()
+				return nil, err
+			}
+			g.active = ports
+			g.refs = 1
+			g.idle = make(chan struct{})
+			g.mu.Unlock()
+			return g.release, nil
+		}
+		if g.active == ports {
+			g.refs++
+			g.mu.Unlock()
+			return g.release, nil
+		}
+		idle := g.idle
+		g.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-idle:
+		}
+	}
+}
+
+func (g *portSetGate) release() {
+	g.mu.Lock()
+	g.refs--
+	if g.refs == 0 {
+		g.active = ""
+		close(g.idle)
+	}
+	g.mu.Unlock()
+}
 
 const httpxCancellationGracePeriod = 250 * time.Millisecond
 
@@ -121,14 +179,13 @@ func newHTTPXProber(opts Options) (*httpxProber, error) {
 // the OnResult callback. Per-call overrides are layered over the process-level
 // defaults held by the prober; the PDCP API key always stays process-level.
 func (h *httpxProber) Probe(ctx context.Context, host, ports string, o probeOptions) ([]ProbeResult, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-httpxGlobalGate:
+	releaseGate, err := httpxPortSetGate.acquire(ctx, ports)
+	if err != nil {
+		return nil, fmt.Errorf("httpprobe: parse ports %q: %w", ports, err)
 	}
 	var gateReleased sync.Once
-	releaseGate := func() {
-		gateReleased.Do(func() { httpxGlobalGate <- struct{}{} })
+	releaseOnce := func() {
+		gateReleased.Do(releaseGate)
 	}
 
 	opts := h.opts
@@ -139,14 +196,10 @@ func (h *httpxProber) Probe(ctx context.Context, host, ports string, o probeOpti
 	opts.ASN = o.ASN
 	opts.Methods = append([]string(nil), o.Methods...)
 
-	// Reset the global before populating it so we don't see ports from a prior
-	// caller. CustomPorts.Set() merges into customport.Ports.
-	customport.Ports = map[int]string{}
-	cp := customport.CustomPorts{}
-	if err := cp.Set(ports); err != nil {
-		releaseGate()
-		return nil, fmt.Errorf("httpprobe: parse ports %q: %w", ports, err)
-	}
+	// The port set is already loaded into customport.Ports by acquire. The
+	// runner reads that global during enumeration; CustomPorts here keeps the
+	// raw value for httpx's options surface (validation already happened).
+	cp := customport.CustomPorts{ports}
 
 	var (
 		mu      sync.Mutex
@@ -235,7 +288,7 @@ func (h *httpxProber) Probe(ctx context.Context, host, ports string, o probeOpti
 
 	r, err := newHTTPXRunner(rOpts)
 	if err != nil {
-		releaseGate()
+		releaseOnce()
 		return nil, fmt.Errorf("httpprobe: build httpx runner: %w", err)
 	}
 	// RunEnumeration() doesn't take a context. Honour ctx cancellation by
@@ -247,7 +300,7 @@ func (h *httpxProber) Probe(ctx context.Context, host, ports string, o probeOpti
 		defer close(done)
 		r.RunEnumeration()
 		r.Close()
-		releaseGate()
+		releaseOnce()
 	}()
 
 	select {
