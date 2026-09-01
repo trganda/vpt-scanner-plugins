@@ -3,6 +3,7 @@ package contract
 import (
 	"bytes"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -177,8 +178,20 @@ func TestCompileRejectsInvalidUTF8(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesAreStableAndCopied(t *testing.T) {
+	got := Capabilities()
+	want := []Capability{CapabilitySubdomain, CapabilityPortscan, CapabilityHTTPProbe, CapabilityVuln, CapabilityKatana, CapabilityCloudlist}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("capabilities = %#v, want %#v", got, want)
+	}
+	got[0] = "changed"
+	if Capabilities()[0] != CapabilitySubdomain || !IsCapability("katana") || IsCapability("unknown") {
+		t.Fatal("capability registry is not immutable or has an invalid membership result")
+	}
+}
+
 func TestManifestValidationAndLimits(t *testing.T) {
-	for _, capability := range []string{"subdomain", "portscan", "httpprobe", "vuln"} {
+	for _, capability := range []string{"subdomain", "portscan", "httpprobe", "vuln", "katana", "cloudlist"} {
 		m := testManifest()
 		m.Capability = capability
 		m.ContractID = "vpt/" + capability + "/v1"

@@ -23,7 +23,7 @@ jobs:
           test "$IS_PRERELEASE" = false
           if [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             capability=all
-          elif [[ "$RELEASE_TAG" =~ ^plugin-(portscan|subdomain|httpprobe|vuln)-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          elif [[ "$RELEASE_TAG" =~ ^plugin-(portscan|subdomain|httpprobe|vuln|katana|cloudlist)-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             capability="${BASH_REMATCH[1]}"
           else
             echo "unsupported release tag: $RELEASE_TAG" >&2
@@ -53,6 +53,8 @@ jobs:
             subfinder/go.sum
             httpprobe/go.sum
             nuclei/go.sum
+            katana/go.sum
+            cloudlist/go.sum
       - uses: bufbuild/buf-setup-action@v1
       - name: Verify generated files and tests
         run: |
@@ -76,6 +78,10 @@ jobs:
             module: httpprobe
           - capability: vuln
             module: nuclei
+          - capability: katana
+            module: katana
+          - capability: cloudlist
+            module: cloudlist
     steps:
       - uses: actions/checkout@v6
         with:
@@ -142,7 +148,7 @@ jobs:
         working-directory: dist
         run: |
            set -euo pipefail
-           for capability in portscan subdomain httpprobe vuln; do
+           for capability in portscan subdomain httpprobe vuln katana cloudlist; do
              if [[ "${{ needs.validate.outputs.capability }}" != all && "$capability" != "${{ needs.validate.outputs.capability }}" ]]; then continue; fi
              for arch in amd64 arm64; do
                source="plugin-${capability}-linux-${arch}"

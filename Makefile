@@ -1,4 +1,4 @@
-MODULES := sdk portscan subfinder httpprobe nuclei
+MODULES := sdk portscan subfinder httpprobe nuclei katana cloudlist
 
 .PHONY: test build generate
 
@@ -9,7 +9,7 @@ test:
 
 build:
 	@mkdir -p bin
-	@for pair in portscan:portscan subfinder:subdomain httpprobe:httpprobe nuclei:vuln; do \
+	@for pair in portscan:portscan subfinder:subdomain httpprobe:httpprobe nuclei:vuln katana:katana cloudlist:cloudlist; do \
 		module=$${pair%%:*}; capability=$${pair##*:}; \
 		(cd $$module && GOWORK=off CGO_ENABLED=0 go build -trimpath -o ../bin/$$capability .) || exit 1; \
 	done

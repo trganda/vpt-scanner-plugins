@@ -42,6 +42,8 @@ const (
 	CapabilityPortscan  Capability = "portscan"
 	CapabilityHTTPProbe Capability = "httpprobe"
 	CapabilityVuln      Capability = "vuln"
+	CapabilityKatana    Capability = "katana"
+	CapabilityCloudlist Capability = "cloudlist"
 )
 
 // ValueType identifies a typed contract value.
@@ -75,7 +77,29 @@ const (
 
 var nameRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 var digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-var capabilities = map[string]bool{"subdomain": true, "portscan": true, "httpprobe": true, "vuln": true}
+var knownCapabilities = []Capability{
+	CapabilitySubdomain,
+	CapabilityPortscan,
+	CapabilityHTTPProbe,
+	CapabilityVuln,
+	CapabilityKatana,
+	CapabilityCloudlist,
+}
+
+// Capabilities returns all capabilities supported by this SDK in stable order.
+// The returned slice is a copy and may be safely changed by the caller.
+func Capabilities() []Capability { return append([]Capability(nil), knownCapabilities...) }
+
+// IsCapability reports whether value is a capability supported by this SDK.
+func IsCapability(value string) bool {
+	for _, capability := range knownCapabilities {
+		if string(capability) == value {
+			return true
+		}
+	}
+	return false
+}
+
 var types = map[string]bool{"domain/v1": true, "host/v1": true, "url/v1": true}
 
 // Manifest describes one scanner capability's versioned inputs, outputs, and parameters.
@@ -398,7 +422,7 @@ func canonicalString(s string) ([]byte, error) {
 }
 
 func validate(m *Manifest) error {
-	if m.ManifestVersion != ManifestVersion || !capabilities[m.Capability] || m.ContractID != "vpt/"+m.Capability+"/v1" || len(m.Inputs) == 0 {
+	if m.ManifestVersion != ManifestVersion || !IsCapability(m.Capability) || m.ContractID != "vpt/"+m.Capability+"/v1" || len(m.Inputs) == 0 {
 		return errors.New("invalid manifest identity")
 	}
 	if len(m.Inputs) > MaxInputs || len(m.Outputs) > MaxOutputs || len(m.Parameters) > MaxParameters {

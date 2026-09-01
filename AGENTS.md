@@ -10,6 +10,8 @@ It is a multi-module Go repository:
 - `subfinder`: subfinder-backed enumeration (`subdomain`).
 - `httpprobe`: httpx-backed HTTP probing (`httpprobe`).
 - `nuclei`: nuclei-backed vulnerability scanner (`vuln`).
+- `katana`: Katana-backed web crawler (`katana`).
+- `cloudlist`: Cloudlist-backed cloud asset discovery (`cloudlist`).
 
 ## Development rules
 
@@ -63,7 +65,7 @@ Plugin releases target Linux amd64 and arm64. Follow this tag convention:
   only the named capability's Linux amd64 and arm64 artifacts plus
   `multiple.intoto.jsonl` provenance.
 - Coordinated bundle releases use `vX.Y.Z`. They must publish Linux amd64 and
-  arm64 artifacts for all four capabilities plus one provenance bundle.
+  arm64 artifacts for all supported capabilities plus one provenance bundle.
 - The GitHub Release display title may be `vX.Y.Z` in either case. The Git tag
   is the artifact-download and SLSA provenance identity, so do not retag a
   published release; create a replacement release when that identity is wrong.

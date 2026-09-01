@@ -9,6 +9,8 @@ Public runtime scanner plugins and the shared go-plugin gRPC SDK for VPT.
 - `subfinder`: subfinder-backed enumeration (`subdomain`).
 - `httpprobe`: httpx-backed HTTP probing (`httpprobe`).
 - `nuclei`: nuclei-backed vulnerability scanning (`vuln`).
+- `katana`: Katana-backed in-scope web crawling (`katana`).
+- `cloudlist`: Cloudlist-backed, domain-scoped cloud asset discovery (`cloudlist`).
 
 ## Protocol
 
@@ -29,15 +31,34 @@ parameters, and typed orchestration outputs. Contract-aware plugins use
 their historical permissive parameters and Raw-only responses. `Describe` and
 contract-bearing execution are optional interfaces exposed by the SDK client.
 The `--print-manifest` helper emits the same canonical bytes returned by
-`Describe` without initializing a scanner tool.
+`Describe` without initializing a scanner tool. Hosts can query the SDK's
+canonical capability registry through `sdk.Capabilities()` and validate one
+value through `sdk.SupportsCapability(value)`; the `sdk/contract` package
+exposes the typed equivalents.
+
+## Cloudlist and Katana
+
+`katana` accepts one `url/v1` target and emits discovered `url/v1` values. Its
+standard (non-headless) crawler supports step-level depth, page cap, traversal
+strategy, retries, delay, rate/concurrency limits, request/total timeouts,
+known-files discovery, exact-host or registrable-domain scope, query/similarity
+deduplication, redirect control, JavaScript parsing, and extension filtering.
+`katana.urls` may fan out only to the `vuln` capability.
+
+`cloudlist` accepts one `domain/v1` target and emits only public DNS names equal
+to that domain or under it. It requires `VPT_NODE_CLOUDLIST_PROVIDER_CONFIG` to
+point to a mounted Cloudlist provider configuration; credentials stay in that
+node-level configuration (or its referenced environment variables), never in
+workflow parameters. Private addresses and cloud assets outside the target
+domain are intentionally excluded.
 
 ## Releases
 
 Plugins can be released independently using `plugin-<capability>-vX.Y.Z` tags,
 or together using a `vX.Y.Z` tag. GitHub Actions publishes Linux amd64/arm64
-binaries, canonical contract manifests, and SLSA provenance. The initial
-contract-aware rollout uses the four per-capability `v0.3.0` tags because the
-backend catalog currently validates capability-scoped source tags.
+binaries, canonical contract manifests, and SLSA provenance. Bundle releases
+publish all supported capability artifacts; scoped tags publish only the named
+capability.
 
 ```bash
 make generate

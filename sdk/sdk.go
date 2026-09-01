@@ -27,6 +27,20 @@ import (
 // ContractProtocolVersion is the additive SDK protocol reported by Describe.
 const ContractProtocolVersion = contract.ProtocolVersion
 
+// Capabilities returns all capabilities supported by this SDK in stable order.
+// The returned slice is a copy and may be safely changed by the caller.
+func Capabilities() []string {
+	known := contract.Capabilities()
+	out := make([]string, len(known))
+	for i, capability := range known {
+		out[i] = string(capability)
+	}
+	return out
+}
+
+// SupportsCapability reports whether value is a capability supported by this SDK.
+func SupportsCapability(value string) bool { return contract.IsCapability(value) }
+
 // PluginName is the key under which the single scanner plugin is dispensed.
 const PluginName = "scanner"
 

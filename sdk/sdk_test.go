@@ -65,6 +65,15 @@ func (s *stubScanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.
 }
 
 var _ = Describe("SDK", func() {
+	It("exposes a stable, copied capability list", func() {
+		capabilities := sdk.Capabilities()
+		Expect(capabilities).To(Equal([]string{"subdomain", "portscan", "httpprobe", "vuln", "katana", "cloudlist"}))
+		capabilities[0] = "changed"
+		Expect(sdk.Capabilities()[0]).To(Equal("subdomain"))
+		Expect(sdk.SupportsCapability("cloudlist")).To(BeTrue())
+		Expect(sdk.SupportsCapability("unknown")).To(BeFalse())
+	})
+
 	It("round-trips manifest description and canonical contract execution", func() {
 		manifest := contract.Manifest{ManifestVersion: 1, Capability: "portscan", ContractID: "vpt/portscan/v1", Inputs: []contract.Input{{Name: "target", AcceptedTypes: []string{"host/v1"}, Cardinality: "one"}}, Outputs: []contract.Output{{Name: "host", Type: "host/v1", Cardinality: "one"}}, Parameters: []contract.Parameter{{Name: "mode", Kind: "enum", Enum: []string{"fast", "full"}, Default: strptr("fast")}}}
 		d, err := contract.Compile(manifest)
