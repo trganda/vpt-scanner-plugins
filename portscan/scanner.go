@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -62,7 +61,7 @@ func (s *scanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.Even
 	host := strings.TrimSpace(t.Host)
 	if host == "" {
 		_ = emit("error", "scan_failed", "port scan failed", map[string]string{"reason": "invalid_target"})
-		return sdk.Result{}, errors.New("portscan: empty target host")
+		return sdk.Result{}, sdk.NewExecutionError("invalid_argument", "portscan: empty target host", false, map[string]string{"field": "host"})
 	}
 
 	// Per-call timeout cap, layered under the workflow's StartToCloseTimeout.

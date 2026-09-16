@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -72,14 +71,14 @@ func (s *scanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.Even
 	_ = emit("info", "scan_started", "subdomain scan started", nil)
 	if s.initErr != nil {
 		_ = emit("error", "scan_failed", "subdomain scan failed", map[string]string{"reason": "initialization"})
-		return sdk.Result{}, s.initErr
+		return sdk.Result{}, sdk.NewExecutionError("initialization_failed", "plugin initialization failed", false, nil)
 	}
 
 	start := time.Now()
 	domain := strings.TrimSpace(t.Host)
 	if domain == "" {
 		_ = emit("error", "scan_failed", "subdomain scan failed", map[string]string{"reason": "invalid_target"})
-		return sdk.Result{}, errors.New("subdomain: empty target host")
+		return sdk.Result{}, sdk.NewExecutionError("invalid_argument", "subdomain: empty target host", false, map[string]string{"field": "host"})
 	}
 
 	opts := enumerateOptionsFromParams(t.Params, s.cfg, s.timeout)

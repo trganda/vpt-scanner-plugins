@@ -120,6 +120,11 @@ var _ = Describe("scanner", func() {
 		s := newWithProber(fake, 0)
 		_, err := s.Execute(context.Background(), sdk.Target{Host: "   "})
 		Expect(err).To(MatchError("httpprobe: empty target host"))
+		executionError, ok := sdk.AsExecutionError(err)
+		Expect(ok).To(BeTrue())
+		Expect(executionError.Code).To(Equal("invalid_argument"))
+		Expect(executionError.Retryable).To(BeFalse())
+		Expect(executionError.Details).To(Equal(map[string]string{"field": "host"}))
 		Expect(fake.calls).To(Equal(0))
 	})
 
@@ -153,7 +158,10 @@ var _ = Describe("scanner", func() {
 	It("surfaces initialization errors", func() {
 		s := &scanner{initErr: errors.New("bad options")}
 		_, err := s.Execute(context.Background(), sdk.Target{Host: "example.com"})
-		Expect(err).To(MatchError("bad options"))
+		executionError, ok := sdk.AsExecutionError(err)
+		Expect(ok).To(BeTrue())
+		Expect(executionError.Code).To(Equal("initialization_failed"))
+		Expect(executionError.Retryable).To(BeFalse())
 	})
 
 	It("reports its capability and has a no-op prepare", func() {

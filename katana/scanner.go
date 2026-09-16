@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,13 +55,13 @@ func (s *scanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.Even
 	_ = emit("info", "scan_started", "web crawl started", nil)
 	if s.initErr != nil {
 		_ = emit("error", "scan_failed", "web crawl failed", map[string]string{"reason": "initialization"})
-		return sdk.Result{}, s.initErr
+		return sdk.Result{}, sdk.NewExecutionError("initialization_failed", "plugin initialization failed", false, nil)
 	}
 
 	target := strings.TrimSpace(t.Host)
 	if target == "" {
 		_ = emit("error", "scan_failed", "web crawl failed", map[string]string{"reason": "invalid_target"})
-		return sdk.Result{}, errors.New("katana: empty target URL")
+		return sdk.Result{}, sdk.NewExecutionError("invalid_argument", "katana: empty target URL", false, map[string]string{"field": "host"})
 	}
 	opts := crawlOptionsFromParams(t.Params, s.cfg)
 	if opts.MaxRunTime > 0 {

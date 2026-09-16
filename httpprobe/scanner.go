@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -67,14 +66,14 @@ func (s *scanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.Even
 	_ = emit("info", "scan_started", "http probe started", nil)
 	if s.initErr != nil {
 		_ = emit("error", "scan_failed", "http probe failed", map[string]string{"reason": "initialization"})
-		return sdk.Result{}, s.initErr
+		return sdk.Result{}, sdk.NewExecutionError("initialization_failed", "plugin initialization failed", false, nil)
 	}
 
 	start := time.Now()
 	host := strings.TrimSpace(t.Host)
 	if host == "" {
 		_ = emit("error", "scan_failed", "http probe failed", map[string]string{"reason": "invalid_target"})
-		return sdk.Result{}, errors.New("httpprobe: empty target host")
+		return sdk.Result{}, sdk.NewExecutionError("invalid_argument", "httpprobe: empty target host", false, map[string]string{"field": "host"})
 	}
 
 	probeOpts := probeOptionsFromParams(t.Params, s.opts)

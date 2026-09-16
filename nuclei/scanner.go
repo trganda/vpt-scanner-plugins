@@ -80,7 +80,7 @@ func (s *scanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.Even
 	_ = emit("info", "scan_started", "vulnerability scan started", nil)
 	if s.initErr != nil {
 		_ = emit("error", "scan_failed", "vulnerability scan failed", map[string]string{"reason": "initialization"})
-		return sdk.Result{}, s.initErr
+		return sdk.Result{}, sdk.NewExecutionError("initialization_failed", "plugin initialization failed", false, nil)
 	}
 
 	start := time.Now()

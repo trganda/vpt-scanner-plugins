@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -57,13 +56,13 @@ func (s *scanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.Even
 	_ = emit("info", "scan_started", "cloud asset enumeration started", nil)
 	if s.initErr != nil {
 		_ = emit("error", "scan_failed", "cloud asset enumeration failed", map[string]string{"reason": "initialization"})
-		return sdk.Result{}, s.initErr
+		return sdk.Result{}, sdk.NewExecutionError("initialization_failed", "plugin initialization failed", false, nil)
 	}
 
 	domain := strings.TrimSpace(t.Host)
 	if domain == "" {
 		_ = emit("error", "scan_failed", "cloud asset enumeration failed", map[string]string{"reason": "invalid_target"})
-		return sdk.Result{}, errors.New("cloudlist: empty target domain")
+		return sdk.Result{}, sdk.NewExecutionError("invalid_argument", "cloudlist: empty target domain", false, map[string]string{"field": "host"})
 	}
 	opts := cloudOptionsFromParams(t.Params, s.cfg)
 	maxRunTime := maxRunTimeFromParams(t.Params, s.cfg.MaxRunTime)
