@@ -14,7 +14,9 @@ import (
 	"github.com/trganda/vpt-scanner-plugins/sdk"
 )
 
-func pluginOptions() sdk.ManifestOptions { return sdk.ManifestOptions{} }
+func pluginOptions() sdk.ManifestOptions {
+	return sdk.ManifestOptions{BuildMetadata: sdk.ReleaseBuildMetadata([]string{"execute_stream", "typed_contracts"}, map[string]string{"libc": "glibc", "os": "linux"})}
+}
 
 func main() {
 	m := manifest()

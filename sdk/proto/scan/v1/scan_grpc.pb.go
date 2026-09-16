@@ -24,6 +24,7 @@ const (
 	ScanPlugin_ExecuteStream_FullMethodName = "/scan.v1.ScanPlugin/ExecuteStream"
 	ScanPlugin_Prepare_FullMethodName       = "/scan.v1.ScanPlugin/Prepare"
 	ScanPlugin_Describe_FullMethodName      = "/scan.v1.ScanPlugin/Describe"
+	ScanPlugin_Check_FullMethodName         = "/scan.v1.ScanPlugin/Check"
 )
 
 // ScanPluginClient is the client API for ScanPlugin service.
@@ -45,6 +46,7 @@ type ScanPluginClient interface {
 	ExecuteStream(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteEvent], error)
 	Prepare(ctx context.Context, in *PrepareRequest, opts ...grpc.CallOption) (*PrepareResponse, error)
 	Describe(ctx context.Context, in *DescribeRequest, opts ...grpc.CallOption) (*DescribeResponse, error)
+	Check(ctx context.Context, in *CheckRequest, opts ...grpc.CallOption) (*CheckResponse, error)
 }
 
 type scanPluginClient struct {
@@ -114,6 +116,16 @@ func (c *scanPluginClient) Describe(ctx context.Context, in *DescribeRequest, op
 	return out, nil
 }
 
+func (c *scanPluginClient) Check(ctx context.Context, in *CheckRequest, opts ...grpc.CallOption) (*CheckResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CheckResponse)
+	err := c.cc.Invoke(ctx, ScanPlugin_Check_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ScanPluginServer is the server API for ScanPlugin service.
 // All implementations must embed UnimplementedScanPluginServer
 // for forward compatibility.
@@ -133,6 +145,7 @@ type ScanPluginServer interface {
 	ExecuteStream(*ExecuteRequest, grpc.ServerStreamingServer[ExecuteEvent]) error
 	Prepare(context.Context, *PrepareRequest) (*PrepareResponse, error)
 	Describe(context.Context, *DescribeRequest) (*DescribeResponse, error)
+	Check(context.Context, *CheckRequest) (*CheckResponse, error)
 	mustEmbedUnimplementedScanPluginServer()
 }
 
@@ -157,6 +170,9 @@ func (UnimplementedScanPluginServer) Prepare(context.Context, *PrepareRequest) (
 }
 func (UnimplementedScanPluginServer) Describe(context.Context, *DescribeRequest) (*DescribeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Describe not implemented")
+}
+func (UnimplementedScanPluginServer) Check(context.Context, *CheckRequest) (*CheckResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Check not implemented")
 }
 func (UnimplementedScanPluginServer) mustEmbedUnimplementedScanPluginServer() {}
 func (UnimplementedScanPluginServer) testEmbeddedByValue()                    {}
@@ -262,6 +278,24 @@ func _ScanPlugin_Describe_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ScanPlugin_Check_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScanPluginServer).Check(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ScanPlugin_Check_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScanPluginServer).Check(ctx, req.(*CheckRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ScanPlugin_ServiceDesc is the grpc.ServiceDesc for ScanPlugin service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -284,6 +318,10 @@ var ScanPlugin_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Describe",
 			Handler:    _ScanPlugin_Describe_Handler,
+		},
+		{
+			MethodName: "Check",
+			Handler:    _ScanPlugin_Check_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -29,7 +29,7 @@ func katanaOutputMapper(_ sdk.Target, result sdk.Result) ([]contract.NamedOutput
 }
 
 func pluginOptions() sdk.ManifestOptions {
-	return sdk.ManifestOptions{OutputMapper: katanaOutputMapper}
+	return sdk.ManifestOptions{OutputMapper: katanaOutputMapper, BuildMetadata: sdk.ReleaseBuildMetadata([]string{"execute_stream", "typed_contracts"}, map[string]string{"libc": "glibc", "os": "linux"})}
 }
 
 func main() {

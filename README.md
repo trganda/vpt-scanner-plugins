@@ -34,7 +34,24 @@ The `--print-manifest` helper emits the same canonical bytes returned by
 `Describe` without initializing a scanner tool. Hosts can query the SDK's
 canonical capability registry through `sdk.Capabilities()` and validate one
 value through `sdk.SupportsCapability(value)`; the `sdk/contract` package
-exposes the typed equivalents.
+exposes the typed equivalents. `sdk.LookupCapability` and
+`contract.LookupCapability` add immutable capability-to-module metadata without
+changing the capability list's stable order or copy semantics.
+
+The additive protocol also includes optional `Check` health discovery and
+structured execution error details without changing `sdk.Scanner`. Unsupported
+checks return `Unimplemented`; cancellation and deadline status codes remain
+unchanged. `Describe` has additive build identity, feature, and runtime
+requirement fields. The `sdk/release` package strictly parses, validates, and
+canonicalizes schema-v1 release descriptors that bind those identities to
+source commits and artifact digests. Handshake protocol and manifest schema
+versions both remain 1. Scoped descriptors contain exactly their tagged plugin;
+aggregate descriptors contain all capabilities and both Linux architectures.
+Release builds supply discovery identity through
+`sdk.ManifestOptions.BuildMetadata`.
+Published releases include canonical `release.json` as a SLSA-attested subject;
+the workflow probes every amd64 artifact and compares its live `Describe`
+identity with the descriptor before upload.
 
 ## Cloudlist and Katana
 

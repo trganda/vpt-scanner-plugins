@@ -457,6 +457,11 @@ type DescribeResponse struct {
 	ContractDigest        string                 `protobuf:"bytes,4,opt,name=contract_digest,json=contractDigest,proto3" json:"contract_digest,omitempty"`
 	ManifestSha256        string                 `protobuf:"bytes,5,opt,name=manifest_sha256,json=manifestSha256,proto3" json:"manifest_sha256,omitempty"`
 	ProtocolVersion       uint32                 `protobuf:"varint,6,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
+	PluginVersion         string                 `protobuf:"bytes,7,opt,name=plugin_version,json=pluginVersion,proto3" json:"plugin_version,omitempty"`
+	SdkVersion            string                 `protobuf:"bytes,8,opt,name=sdk_version,json=sdkVersion,proto3" json:"sdk_version,omitempty"`
+	SourceCommit          string                 `protobuf:"bytes,9,opt,name=source_commit,json=sourceCommit,proto3" json:"source_commit,omitempty"`
+	Features              []string               `protobuf:"bytes,10,rep,name=features,proto3" json:"features,omitempty"`
+	RuntimeRequirements   map[string]string      `protobuf:"bytes,11,rep,name=runtime_requirements,json=runtimeRequirements,proto3" json:"runtime_requirements,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -531,6 +536,41 @@ func (x *DescribeResponse) GetProtocolVersion() uint32 {
 		return x.ProtocolVersion
 	}
 	return 0
+}
+
+func (x *DescribeResponse) GetPluginVersion() string {
+	if x != nil {
+		return x.PluginVersion
+	}
+	return ""
+}
+
+func (x *DescribeResponse) GetSdkVersion() string {
+	if x != nil {
+		return x.SdkVersion
+	}
+	return ""
+}
+
+func (x *DescribeResponse) GetSourceCommit() string {
+	if x != nil {
+		return x.SourceCommit
+	}
+	return ""
+}
+
+func (x *DescribeResponse) GetFeatures() []string {
+	if x != nil {
+		return x.Features
+	}
+	return nil
+}
+
+func (x *DescribeResponse) GetRuntimeRequirements() map[string]string {
+	if x != nil {
+		return x.RuntimeRequirements
+	}
+	return nil
 }
 
 // ExecuteEvent is either a progress event or the terminal result. Exactly one
@@ -786,6 +826,216 @@ func (*PrepareResponse) Descriptor() ([]byte, []int) {
 	return file_scan_v1_scan_proto_rawDescGZIP(), []int{11}
 }
 
+type CheckRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckRequest) Reset() {
+	*x = CheckRequest{}
+	mi := &file_scan_v1_scan_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckRequest) ProtoMessage() {}
+
+func (x *CheckRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_scan_v1_scan_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckRequest.ProtoReflect.Descriptor instead.
+func (*CheckRequest) Descriptor() ([]byte, []int) {
+	return file_scan_v1_scan_proto_rawDescGZIP(), []int{12}
+}
+
+type CheckResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Status        string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
+	Issues        []*CheckIssue          `protobuf:"bytes,2,rep,name=issues,proto3" json:"issues,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckResponse) Reset() {
+	*x = CheckResponse{}
+	mi := &file_scan_v1_scan_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckResponse) ProtoMessage() {}
+
+func (x *CheckResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_scan_v1_scan_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckResponse.ProtoReflect.Descriptor instead.
+func (*CheckResponse) Descriptor() ([]byte, []int) {
+	return file_scan_v1_scan_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *CheckResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *CheckResponse) GetIssues() []*CheckIssue {
+	if x != nil {
+		return x.Issues
+	}
+	return nil
+}
+
+type CheckIssue struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckIssue) Reset() {
+	*x = CheckIssue{}
+	mi := &file_scan_v1_scan_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckIssue) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckIssue) ProtoMessage() {}
+
+func (x *CheckIssue) ProtoReflect() protoreflect.Message {
+	mi := &file_scan_v1_scan_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckIssue.ProtoReflect.Descriptor instead.
+func (*CheckIssue) Descriptor() ([]byte, []int) {
+	return file_scan_v1_scan_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *CheckIssue) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *CheckIssue) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// ExecutionErrorDetail is attached to an execution gRPC status. Its fields are
+// deliberately bounded, non-tool-output metadata suitable for host decisions.
+type ExecutionErrorDetail struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Retryable     bool                   `protobuf:"varint,3,opt,name=retryable,proto3" json:"retryable,omitempty"`
+	Details       map[string]string      `protobuf:"bytes,4,rep,name=details,proto3" json:"details,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExecutionErrorDetail) Reset() {
+	*x = ExecutionErrorDetail{}
+	mi := &file_scan_v1_scan_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExecutionErrorDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExecutionErrorDetail) ProtoMessage() {}
+
+func (x *ExecutionErrorDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_scan_v1_scan_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExecutionErrorDetail.ProtoReflect.Descriptor instead.
+func (*ExecutionErrorDetail) Descriptor() ([]byte, []int) {
+	return file_scan_v1_scan_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ExecutionErrorDetail) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *ExecutionErrorDetail) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *ExecutionErrorDetail) GetRetryable() bool {
+	if x != nil {
+		return x.Retryable
+	}
+	return false
+}
+
+func (x *ExecutionErrorDetail) GetDetails() map[string]string {
+	if x != nil {
+		return x.Details
+	}
+	return nil
+}
+
 var File_scan_v1_scan_proto protoreflect.FileDescriptor
 
 const file_scan_v1_scan_proto_rawDesc = "" +
@@ -825,7 +1075,7 @@ const file_scan_v1_scan_proto_rawDesc = "" +
 	"\x04host\x18\x02 \x01(\tH\x00R\x04host\x12\x12\n" +
 	"\x03url\x18\x03 \x01(\tH\x00R\x03urlB\a\n" +
 	"\x05value\"\x11\n" +
-	"\x0fDescribeRequest\"\x88\x02\n" +
+	"\x0fDescribeRequest\"\xc0\x04\n" +
 	"\x10DescribeResponse\x12\x1e\n" +
 	"\n" +
 	"capability\x18\x01 \x01(\tR\n" +
@@ -835,7 +1085,17 @@ const file_scan_v1_scan_proto_rawDesc = "" +
 	"contractId\x12'\n" +
 	"\x0fcontract_digest\x18\x04 \x01(\tR\x0econtractDigest\x12'\n" +
 	"\x0fmanifest_sha256\x18\x05 \x01(\tR\x0emanifestSha256\x12)\n" +
-	"\x10protocol_version\x18\x06 \x01(\rR\x0fprotocolVersion\"\x83\x01\n" +
+	"\x10protocol_version\x18\x06 \x01(\rR\x0fprotocolVersion\x12%\n" +
+	"\x0eplugin_version\x18\a \x01(\tR\rpluginVersion\x12\x1f\n" +
+	"\vsdk_version\x18\b \x01(\tR\n" +
+	"sdkVersion\x12#\n" +
+	"\rsource_commit\x18\t \x01(\tR\fsourceCommit\x12\x1a\n" +
+	"\bfeatures\x18\n" +
+	" \x03(\tR\bfeatures\x12e\n" +
+	"\x14runtime_requirements\x18\v \x03(\v22.scan.v1.DescribeResponse.RuntimeRequirementsEntryR\x13runtimeRequirements\x1aF\n" +
+	"\x18RuntimeRequirementsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x83\x01\n" +
 	"\fExecuteEvent\x124\n" +
 	"\bprogress\x18\x01 \x01(\v2\x16.scan.v1.ProgressEventH\x00R\bprogress\x122\n" +
 	"\x06result\x18\x02 \x01(\v2\x18.scan.v1.ExecuteResponseH\x00R\x06resultB\t\n" +
@@ -854,7 +1114,23 @@ const file_scan_v1_scan_proto_rawDesc = "" +
 	"\x0ePrepareRequest\x12\x1d\n" +
 	"\n" +
 	"auth_token\x18\x01 \x01(\tR\tauthToken\"\x11\n" +
-	"\x0fPrepareResponse2\xd3\x02\n" +
+	"\x0fPrepareResponse\"\x0e\n" +
+	"\fCheckRequest\"T\n" +
+	"\rCheckResponse\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\x12+\n" +
+	"\x06issues\x18\x02 \x03(\v2\x13.scan.v1.CheckIssueR\x06issues\":\n" +
+	"\n" +
+	"CheckIssue\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xe4\x01\n" +
+	"\x14ExecutionErrorDetail\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1c\n" +
+	"\tretryable\x18\x03 \x01(\bR\tretryable\x12D\n" +
+	"\adetails\x18\x04 \x03(\v2*.scan.v1.ExecutionErrorDetail.DetailsEntryR\adetails\x1a:\n" +
+	"\fDetailsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x012\x8b\x03\n" +
 	"\n" +
 	"ScanPlugin\x12E\n" +
 	"\n" +
@@ -862,7 +1138,8 @@ const file_scan_v1_scan_proto_rawDesc = "" +
 	"\aExecute\x12\x17.scan.v1.ExecuteRequest\x1a\x18.scan.v1.ExecuteResponse\x12A\n" +
 	"\rExecuteStream\x12\x17.scan.v1.ExecuteRequest\x1a\x15.scan.v1.ExecuteEvent0\x01\x12<\n" +
 	"\aPrepare\x12\x17.scan.v1.PrepareRequest\x1a\x18.scan.v1.PrepareResponse\x12?\n" +
-	"\bDescribe\x12\x18.scan.v1.DescribeRequest\x1a\x19.scan.v1.DescribeResponseBAZ?github.com/trganda/vpt-scanner-plugins/sdk/proto/scan/v1;scanv1b\x06proto3"
+	"\bDescribe\x12\x18.scan.v1.DescribeRequest\x1a\x19.scan.v1.DescribeResponse\x126\n" +
+	"\x05Check\x12\x15.scan.v1.CheckRequest\x1a\x16.scan.v1.CheckResponseBAZ?github.com/trganda/vpt-scanner-plugins/sdk/proto/scan/v1;scanv1b\x06proto3"
 
 var (
 	file_scan_v1_scan_proto_rawDescOnce sync.Once
@@ -876,7 +1153,7 @@ func file_scan_v1_scan_proto_rawDescGZIP() []byte {
 	return file_scan_v1_scan_proto_rawDescData
 }
 
-var file_scan_v1_scan_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_scan_v1_scan_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_scan_v1_scan_proto_goTypes = []any{
 	(*CapabilityRequest)(nil),     // 0: scan.v1.CapabilityRequest
 	(*CapabilityResponse)(nil),    // 1: scan.v1.CapabilityResponse
@@ -890,33 +1167,44 @@ var file_scan_v1_scan_proto_goTypes = []any{
 	(*ProgressEvent)(nil),         // 9: scan.v1.ProgressEvent
 	(*PrepareRequest)(nil),        // 10: scan.v1.PrepareRequest
 	(*PrepareResponse)(nil),       // 11: scan.v1.PrepareResponse
-	nil,                           // 12: scan.v1.ExecuteRequest.ParamsEntry
-	nil,                           // 13: scan.v1.ProgressEvent.FieldsEntry
-	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
+	(*CheckRequest)(nil),          // 12: scan.v1.CheckRequest
+	(*CheckResponse)(nil),         // 13: scan.v1.CheckResponse
+	(*CheckIssue)(nil),            // 14: scan.v1.CheckIssue
+	(*ExecutionErrorDetail)(nil),  // 15: scan.v1.ExecutionErrorDetail
+	nil,                           // 16: scan.v1.ExecuteRequest.ParamsEntry
+	nil,                           // 17: scan.v1.DescribeResponse.RuntimeRequirementsEntry
+	nil,                           // 18: scan.v1.ProgressEvent.FieldsEntry
+	nil,                           // 19: scan.v1.ExecutionErrorDetail.DetailsEntry
+	(*timestamppb.Timestamp)(nil), // 20: google.protobuf.Timestamp
 }
 var file_scan_v1_scan_proto_depIdxs = []int32{
-	12, // 0: scan.v1.ExecuteRequest.params:type_name -> scan.v1.ExecuteRequest.ParamsEntry
+	16, // 0: scan.v1.ExecuteRequest.params:type_name -> scan.v1.ExecuteRequest.ParamsEntry
 	4,  // 1: scan.v1.ExecuteResponse.outputs:type_name -> scan.v1.NamedOutput
 	5,  // 2: scan.v1.NamedOutput.values:type_name -> scan.v1.TypedValue
-	9,  // 3: scan.v1.ExecuteEvent.progress:type_name -> scan.v1.ProgressEvent
-	3,  // 4: scan.v1.ExecuteEvent.result:type_name -> scan.v1.ExecuteResponse
-	13, // 5: scan.v1.ProgressEvent.fields:type_name -> scan.v1.ProgressEvent.FieldsEntry
-	14, // 6: scan.v1.ProgressEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	0,  // 7: scan.v1.ScanPlugin.Capability:input_type -> scan.v1.CapabilityRequest
-	2,  // 8: scan.v1.ScanPlugin.Execute:input_type -> scan.v1.ExecuteRequest
-	2,  // 9: scan.v1.ScanPlugin.ExecuteStream:input_type -> scan.v1.ExecuteRequest
-	10, // 10: scan.v1.ScanPlugin.Prepare:input_type -> scan.v1.PrepareRequest
-	6,  // 11: scan.v1.ScanPlugin.Describe:input_type -> scan.v1.DescribeRequest
-	1,  // 12: scan.v1.ScanPlugin.Capability:output_type -> scan.v1.CapabilityResponse
-	3,  // 13: scan.v1.ScanPlugin.Execute:output_type -> scan.v1.ExecuteResponse
-	8,  // 14: scan.v1.ScanPlugin.ExecuteStream:output_type -> scan.v1.ExecuteEvent
-	11, // 15: scan.v1.ScanPlugin.Prepare:output_type -> scan.v1.PrepareResponse
-	7,  // 16: scan.v1.ScanPlugin.Describe:output_type -> scan.v1.DescribeResponse
-	12, // [12:17] is the sub-list for method output_type
-	7,  // [7:12] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	17, // 3: scan.v1.DescribeResponse.runtime_requirements:type_name -> scan.v1.DescribeResponse.RuntimeRequirementsEntry
+	9,  // 4: scan.v1.ExecuteEvent.progress:type_name -> scan.v1.ProgressEvent
+	3,  // 5: scan.v1.ExecuteEvent.result:type_name -> scan.v1.ExecuteResponse
+	18, // 6: scan.v1.ProgressEvent.fields:type_name -> scan.v1.ProgressEvent.FieldsEntry
+	20, // 7: scan.v1.ProgressEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	14, // 8: scan.v1.CheckResponse.issues:type_name -> scan.v1.CheckIssue
+	19, // 9: scan.v1.ExecutionErrorDetail.details:type_name -> scan.v1.ExecutionErrorDetail.DetailsEntry
+	0,  // 10: scan.v1.ScanPlugin.Capability:input_type -> scan.v1.CapabilityRequest
+	2,  // 11: scan.v1.ScanPlugin.Execute:input_type -> scan.v1.ExecuteRequest
+	2,  // 12: scan.v1.ScanPlugin.ExecuteStream:input_type -> scan.v1.ExecuteRequest
+	10, // 13: scan.v1.ScanPlugin.Prepare:input_type -> scan.v1.PrepareRequest
+	6,  // 14: scan.v1.ScanPlugin.Describe:input_type -> scan.v1.DescribeRequest
+	12, // 15: scan.v1.ScanPlugin.Check:input_type -> scan.v1.CheckRequest
+	1,  // 16: scan.v1.ScanPlugin.Capability:output_type -> scan.v1.CapabilityResponse
+	3,  // 17: scan.v1.ScanPlugin.Execute:output_type -> scan.v1.ExecuteResponse
+	8,  // 18: scan.v1.ScanPlugin.ExecuteStream:output_type -> scan.v1.ExecuteEvent
+	11, // 19: scan.v1.ScanPlugin.Prepare:output_type -> scan.v1.PrepareResponse
+	7,  // 20: scan.v1.ScanPlugin.Describe:output_type -> scan.v1.DescribeResponse
+	13, // 21: scan.v1.ScanPlugin.Check:output_type -> scan.v1.CheckResponse
+	16, // [16:22] is the sub-list for method output_type
+	10, // [10:16] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_scan_v1_scan_proto_init() }
@@ -939,7 +1227,7 @@ func file_scan_v1_scan_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_scan_v1_scan_proto_rawDesc), len(file_scan_v1_scan_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

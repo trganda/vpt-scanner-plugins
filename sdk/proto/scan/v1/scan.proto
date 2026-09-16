@@ -21,6 +21,7 @@ service ScanPlugin {
   rpc ExecuteStream(ExecuteRequest) returns (stream ExecuteEvent);
   rpc Prepare(PrepareRequest) returns (PrepareResponse);
   rpc Describe(DescribeRequest) returns (DescribeResponse);
+  rpc Check(CheckRequest) returns (CheckResponse);
 }
 
 message CapabilityRequest {}
@@ -69,6 +70,11 @@ message DescribeResponse {
   string contract_digest = 4;
   string manifest_sha256 = 5;
   uint32 protocol_version = 6;
+  string plugin_version = 7;
+  string sdk_version = 8;
+  string source_commit = 9;
+  repeated string features = 10;
+  map<string, string> runtime_requirements = 11;
 }
 
 // ExecuteEvent is either a progress event or the terminal result. Exactly one
@@ -99,3 +105,24 @@ message PrepareRequest {
 }
 
 message PrepareResponse {}
+
+message CheckRequest {}
+
+message CheckResponse {
+  string status = 1;
+  repeated CheckIssue issues = 2;
+}
+
+message CheckIssue {
+  string code = 1;
+  string message = 2;
+}
+
+// ExecutionErrorDetail is attached to an execution gRPC status. Its fields are
+// deliberately bounded, non-tool-output metadata suitable for host decisions.
+message ExecutionErrorDetail {
+  string code = 1;
+  string message = 2;
+  bool retryable = 3;
+  map<string, string> details = 4;
+}

@@ -188,6 +188,13 @@ func TestCapabilitiesAreStableAndCopied(t *testing.T) {
 	if Capabilities()[0] != CapabilitySubdomain || !IsCapability("katana") || IsCapability("unknown") {
 		t.Fatal("capability registry is not immutable or has an invalid membership result")
 	}
+	metadata, ok := LookupCapability("subdomain")
+	if !ok || metadata != (CapabilityMetadata{Capability: CapabilitySubdomain, Module: "subfinder"}) {
+		t.Fatalf("subdomain metadata = %#v, %v", metadata, ok)
+	}
+	if _, ok := LookupCapability("unknown"); ok {
+		t.Fatal("unknown capability has metadata")
+	}
 }
 
 func TestManifestValidationAndLimits(t *testing.T) {

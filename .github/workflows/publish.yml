@@ -13,6 +13,7 @@ jobs:
     outputs:
       commit: ${{ steps.commit.outputs.sha }}
       capability: ${{ steps.plugin.outputs.capability }}
+      version: ${{ steps.plugin.outputs.version }}
     steps:
       - name: Require stable release
         id: plugin
@@ -21,15 +22,18 @@ jobs:
           IS_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
           test "$IS_PRERELEASE" = false
-          if [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             capability=all
-          elif [[ "$RELEASE_TAG" =~ ^plugin-(portscan|subdomain|httpprobe|vuln|katana|cloudlist)-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            version="$RELEASE_TAG"
+          elif [[ "$RELEASE_TAG" =~ ^plugin-(portscan|subdomain|httpprobe|vuln|katana|cloudlist)-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             capability="${BASH_REMATCH[1]}"
+            version="${RELEASE_TAG##*-}"
           else
             echo "unsupported release tag: $RELEASE_TAG" >&2
             exit 1
           fi
           echo "capability=$capability" >>"$GITHUB_OUTPUT"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.release.tag_name }}
@@ -102,9 +106,13 @@ jobs:
           GOOS: linux
           GOARCH: ${{ matrix.arch }}
           OUTPUT: ../dist/${{ matrix.plugin.capability }}_linux_${{ matrix.arch }}
+          PLUGIN_VERSION: ${{ needs.validate.outputs.version }}
+          SOURCE_COMMIT: ${{ needs.validate.outputs.commit }}
         run: |
           mkdir -p ../dist
-          GOWORK=off go build -trimpath -o "$OUTPUT" .
+          GOWORK=off go build -trimpath \
+            -ldflags "-X github.com/trganda/vpt-scanner-plugins/sdk.buildPluginVersion=$PLUGIN_VERSION -X github.com/trganda/vpt-scanner-plugins/sdk.buildSourceCommit=$SOURCE_COMMIT" \
+            -o "$OUTPUT" .
           env -u GOOS -u GOARCH GOWORK=off go run . --print-manifest > "../dist/${{ matrix.plugin.capability }}_contract.json"
           test -s "../dist/${{ matrix.plugin.capability }}_contract.json"
           python3 - "../dist/${{ matrix.plugin.capability }}_contract.json" <<'PY'
@@ -136,6 +144,14 @@ jobs:
     outputs:
       subjects: ${{ steps.subjects.outputs.subjects }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: sdk/go.mod
+          cache: true
+          cache-dependency-path: sdk/go.sum
       - uses: actions/download-artifact@v8
         with:
           pattern: plugin-*
@@ -167,6 +183,18 @@ jobs:
              cmp "plugin-${capability}-linux-amd64/${capability}_contract.json" "plugin-${capability}-linux-arm64/${capability}_contract.json"
              test "$(sha256sum "${capability}_contract.json" | cut -d' ' -f1)" = "$(sha256sum "plugin-${capability}-linux-amd64/${capability}_contract.json" | cut -d' ' -f1)"
            done
+           (cd ../sdk && GOWORK=off go run ./cmd/release-descriptor \
+             -dist ../dist \
+             -repository "${{ github.repository }}" \
+             -tag "${{ github.event.release.tag_name }}" \
+             -commit "${{ needs.validate.outputs.commit }}") > release.json
+           for capability in portscan subdomain httpprobe vuln katana cloudlist; do
+             if [[ "${{ needs.validate.outputs.capability }}" != all && "$capability" != "${{ needs.validate.outputs.capability }}" ]]; then continue; fi
+             (cd ../sdk && GOWORK=off go run ./cmd/verify-plugin-release \
+               -plugin "../dist/${capability}_linux_amd64" \
+               -descriptor ../dist/release.json \
+               -capability "$capability")
+           done
            python3 - <<'PY'
            import base64, hashlib, json, pathlib
            files = sorted(p for p in pathlib.Path('.').glob('*') if p.is_file() and p.name != 'subjects.txt')
@@ -179,14 +207,14 @@ jobs:
                sem = json.dumps(semantic, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
                print(f"{p}: semantic_sha256=sha256:{hashlib.sha256(sem).hexdigest()} manifest_sha256=sha256:{hashlib.sha256(raw).hexdigest()}")
            PY
-           sha256sum -- *_linux_* *_contract.json > subjects.txt
+           sha256sum -- *_linux_* *_contract.json release.json > subjects.txt
            echo "subjects=$(base64 -w0 subjects.txt)" >> "$GITHUB_OUTPUT"
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           GH_REPO: ${{ github.repository }}
-        run: gh release upload "$RELEASE_TAG" dist/*_linux_* dist/*_contract.json --repo "$GH_REPO"
+        run: gh release upload "$RELEASE_TAG" dist/*_linux_* dist/*_contract.json dist/release.json --repo "$GH_REPO"
 
   provenance:
     needs: collect

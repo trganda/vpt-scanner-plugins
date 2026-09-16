@@ -120,6 +120,63 @@ The handshake uses magic cookie `VPT_SCAN_PLUGIN=vpt-scanner-plugin` and
 `ProtocolVersion: 1`. Plugin logging must go to **stderr** because go-plugin
 uses stdout for its startup handshake.
 
+The capability registry is available through `sdk.Capabilities()` and
+`sdk.LookupCapability()`. `Capabilities` retains the stable order
+`subdomain`, `portscan`, `httpprobe`, `vuln`, `katana`, `cloudlist` and returns
+a fresh slice on every call. The lookup returns immutable capability/source
+module metadata without exposing the registry's backing storage. Typed callers
+can use the equivalent APIs in `sdk/contract`.
+
+## Release descriptors and discovery
+
+The dependency-free `sdk/release` package defines release descriptor schema
+version 1. A descriptor binds a source repository, release tag, and Git commit
+to the SDK and protocol versions and to ordered plugin entries. Each plugin
+entry includes its version, named platform artifacts with canonical
+`sha256:<lowercase hex>` digests, feature names, and string-valued runtime
+requirements.
+
+Descriptors follow the release tag shape. A `plugin-<capability>-vX.Y.Z` tag
+contains exactly that plugin. An aggregate `vX.Y.Z` descriptor contains every
+SDK capability in canonical order. Every entry uses the tag version and exactly
+the `<capability>_linux_amd64` and `<capability>_linux_arm64` artifacts.
+
+Use `release.Parse` for untrusted JSON, `release.Validate` for a programmatic
+descriptor, and `release.Canonical` for compact deterministic JSON. Parsing is
+strict: duplicate or unknown keys, `null`, trailing JSON, invalid UTF-8,
+unsupported schema/protocol versions, unknown capabilities, duplicate entries,
+and malformed identities or digests are rejected. Plugin entries must follow
+the same stable capability order as `sdk.Capabilities()`.
+
+`DescribeResponse` additively carries `plugin_version`, `sdk_version`,
+`source_commit`, `features`, and `runtime_requirements`. Older peers ignore
+these fields and current plugins may leave them empty. Release builds populate
+them with `sdk.ManifestOptions.BuildMetadata`; partial or malformed metadata is
+rejected before the plugin starts serving. Manifest and handshake versions
+remain 1.
+
+The publish workflow emits canonical `release.json`, includes it in the SLSA
+subject set, and launches each amd64 artifact before upload to compare its live
+`Describe` identity with that descriptor. Missing linker metadata or any
+identity mismatch fails the release.
+
+## Optional health checks
+
+Health checks do not change `sdk.Scanner`. A plugin may separately implement:
+
+```go
+type Checker interface {
+    Check(context.Context) (sdk.CheckResult, error)
+}
+```
+
+The bridge exposes `sdk.Checker` on the host-side client. A plugin without that
+interface returns gRPC `codes.Unimplemented`, allowing the host to distinguish
+"not supported" from an unhealthy result. Valid statuses are `ok`, `degraded`,
+and `unhealthy`. Issues contain only a short machine-readable code and safe
+message; do not include credentials, tool output, targets, parameters, or
+request/response bodies.
+
 ## Execute and additive `ExecuteStream`
 
 `Execute` remains the unary compatibility operation and returns only the
@@ -143,6 +200,13 @@ version 1. A host that receives an unimplemented-stream error from an older
 plugin should fall back to `Execute`; the fallback has result compatibility but
 does not provide progress events. The next patch release for this API rollout
 is `v0.2.1`.
+
+Execution methods may return `sdk.NewExecutionError` when the host needs a
+stable code, retryability decision, and small safe details. The bridge encodes
+that type as a protobuf gRPC status detail and reconstructs it on the client;
+use `sdk.AsExecutionError` to inspect it. Context cancellation and deadline
+errors are never wrapped as execution errors and retain gRPC `Canceled` and
+`DeadlineExceeded` codes. Plain errors keep their existing behavior.
 
 ## Safe structured events
 

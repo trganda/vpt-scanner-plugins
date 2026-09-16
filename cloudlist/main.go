@@ -29,7 +29,7 @@ func cloudlistOutputMapper(_ sdk.Target, result sdk.Result) ([]contract.NamedOut
 }
 
 func pluginOptions() sdk.ManifestOptions {
-	return sdk.ManifestOptions{OutputMapper: cloudlistOutputMapper}
+	return sdk.ManifestOptions{OutputMapper: cloudlistOutputMapper, BuildMetadata: sdk.ReleaseBuildMetadata([]string{"execute_stream", "typed_contracts"}, map[string]string{"libc": "glibc", "os": "linux"})}
 }
 
 func main() {

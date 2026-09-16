@@ -77,27 +77,47 @@ const (
 
 var nameRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 var digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-var knownCapabilities = []Capability{
-	CapabilitySubdomain,
-	CapabilityPortscan,
-	CapabilityHTTPProbe,
-	CapabilityVuln,
-	CapabilityKatana,
-	CapabilityCloudlist,
+
+// CapabilityMetadata is immutable metadata for one SDK capability. Module is
+// the source module that builds the capability's release artifact.
+type CapabilityMetadata struct {
+	Capability Capability
+	Module     string
+}
+
+var knownCapabilities = []CapabilityMetadata{
+	{Capability: CapabilitySubdomain, Module: "subfinder"},
+	{Capability: CapabilityPortscan, Module: "portscan"},
+	{Capability: CapabilityHTTPProbe, Module: "httpprobe"},
+	{Capability: CapabilityVuln, Module: "nuclei"},
+	{Capability: CapabilityKatana, Module: "katana"},
+	{Capability: CapabilityCloudlist, Module: "cloudlist"},
 }
 
 // Capabilities returns all capabilities supported by this SDK in stable order.
 // The returned slice is a copy and may be safely changed by the caller.
-func Capabilities() []Capability { return append([]Capability(nil), knownCapabilities...) }
+func Capabilities() []Capability {
+	out := make([]Capability, len(knownCapabilities))
+	for i, metadata := range knownCapabilities {
+		out[i] = metadata.Capability
+	}
+	return out
+}
+
+// LookupCapability returns immutable metadata for a supported capability.
+func LookupCapability(value string) (CapabilityMetadata, bool) {
+	for _, metadata := range knownCapabilities {
+		if string(metadata.Capability) == value {
+			return metadata, true
+		}
+	}
+	return CapabilityMetadata{}, false
+}
 
 // IsCapability reports whether value is a capability supported by this SDK.
 func IsCapability(value string) bool {
-	for _, capability := range knownCapabilities {
-		if string(capability) == value {
-			return true
-		}
-	}
-	return false
+	_, ok := LookupCapability(value)
+	return ok
 }
 
 var types = map[string]bool{"domain/v1": true, "host/v1": true, "url/v1": true}

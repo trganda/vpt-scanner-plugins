@@ -20,7 +20,7 @@ func nucleiTargetMapper(target sdk.Target) (sdk.Target, error) {
 }
 
 func pluginOptions() sdk.ManifestOptions {
-	return sdk.ManifestOptions{TargetMapper: nucleiTargetMapper}
+	return sdk.ManifestOptions{TargetMapper: nucleiTargetMapper, BuildMetadata: sdk.ReleaseBuildMetadata([]string{"execute_stream", "typed_contracts"}, map[string]string{"libc": "glibc", "os": "linux"})}
 }
 
 func main() {

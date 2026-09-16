@@ -10,9 +10,12 @@ package sdk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hashicorp/go-plugin"
 	"github.com/trganda/vpt-scanner-plugins/sdk/contract"
@@ -27,6 +30,25 @@ import (
 // ContractProtocolVersion is the additive SDK protocol reported by Describe.
 const ContractProtocolVersion = contract.ProtocolVersion
 
+// Version is the released semantic version of this SDK source.
+const Version = "v0.6.0"
+
+var (
+	buildPluginVersion string
+	buildSourceCommit  string
+)
+
+// ReleaseBuildMetadata returns compile-time release identity while preserving a
+// zero value for local builds. Release automation sets the private string vars
+// with -ldflags -X; a partially configured release fails ManifestOptions
+// validation rather than serving ambiguous identity.
+func ReleaseBuildMetadata(features []string, runtimeRequirements map[string]string) BuildMetadata {
+	if buildPluginVersion == "" && buildSourceCommit == "" {
+		return BuildMetadata{}
+	}
+	return BuildMetadata{PluginVersion: buildPluginVersion, SDKVersion: Version, SourceCommit: buildSourceCommit, Features: append([]string(nil), features...), RuntimeRequirements: cloneStrings(runtimeRequirements)}
+}
+
 // Capabilities returns all capabilities supported by this SDK in stable order.
 // The returned slice is a copy and may be safely changed by the caller.
 func Capabilities() []string {
@@ -40,6 +62,21 @@ func Capabilities() []string {
 
 // SupportsCapability reports whether value is a capability supported by this SDK.
 func SupportsCapability(value string) bool { return contract.IsCapability(value) }
+
+// CapabilityMetadata is immutable source metadata for one SDK capability.
+type CapabilityMetadata struct {
+	Capability string
+	Module     string
+}
+
+// LookupCapability returns immutable metadata for a supported capability.
+func LookupCapability(value string) (CapabilityMetadata, bool) {
+	metadata, ok := contract.LookupCapability(value)
+	if !ok {
+		return CapabilityMetadata{}, false
+	}
+	return CapabilityMetadata{Capability: string(metadata.Capability), Module: metadata.Module}, true
+}
 
 // PluginName is the key under which the single scanner plugin is dispensed.
 const PluginName = "scanner"
@@ -99,11 +136,85 @@ type Description struct {
 	ContractDigest        string
 	ManifestSHA256        string
 	ProtocolVersion       uint32
+	PluginVersion         string
+	SDKVersion            string
+	SourceCommit          string
+	Features              []string
+	RuntimeRequirements   map[string]string
 }
 
 // Describer is the optional manifest discovery API implemented by GRPCClient.
 type Describer interface {
 	Describe(context.Context) (Description, error)
+}
+
+// CheckStatus is the bounded health state returned by an optional Checker.
+type CheckStatus string
+
+const (
+	CheckStatusOK        CheckStatus = "ok"
+	CheckStatusDegraded  CheckStatus = "degraded"
+	CheckStatusUnhealthy CheckStatus = "unhealthy"
+)
+
+// CheckIssue is safe, bounded health information. It must not contain tool
+// output, credentials, request parameters, or request/response bodies.
+type CheckIssue struct {
+	Code    string
+	Message string
+}
+
+// CheckResult is the result of an optional, side-effect-free plugin check.
+type CheckResult struct {
+	Status CheckStatus
+	Issues []CheckIssue
+}
+
+// Checker is an optional plugin health interface. GRPCClient implements it;
+// plugins that do not implement it return codes.Unimplemented.
+type Checker interface {
+	Check(context.Context) (CheckResult, error)
+}
+
+// ExecutionError is a safe, machine-readable scan failure. Details must be
+// small non-sensitive values suitable for orchestration decisions.
+type ExecutionError struct {
+	Code      string
+	Message   string
+	Retryable bool
+	Details   map[string]string
+	status    *status.Status
+}
+
+// NewExecutionError constructs a typed execution failure and copies details.
+func NewExecutionError(code, message string, retryable bool, details map[string]string) *ExecutionError {
+	return &ExecutionError{Code: code, Message: message, Retryable: retryable, Details: cloneStrings(details)}
+}
+
+func (e *ExecutionError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return e.Code
+}
+
+// GRPCStatus preserves the original gRPC status after client-side decoding.
+func (e *ExecutionError) GRPCStatus() *status.Status {
+	if e.status != nil {
+		return e.status
+	}
+	return status.New(codes.Unknown, e.Error())
+}
+
+// AsExecutionError extracts a typed execution failure and returns a safe copy.
+func AsExecutionError(err error) (*ExecutionError, bool) {
+	var executionError *ExecutionError
+	if !errors.As(err, &executionError) || executionError == nil {
+		return nil, false
+	}
+	out := *executionError
+	out.Details = cloneStrings(executionError.Details)
+	return &out, true
 }
 
 // Event is a safe, structured progress update. Sequence is local to one
@@ -164,8 +275,19 @@ func PluginMap(impl Scanner) map[string]plugin.Plugin {
 
 // ManifestOptions configures plugin-owned typed output conversion.
 type ManifestOptions struct {
-	TargetMapper func(Target) (Target, error)
-	OutputMapper func(Target, Result) ([]contract.NamedOutput, error)
+	TargetMapper  func(Target) (Target, error)
+	OutputMapper  func(Target, Result) ([]contract.NamedOutput, error)
+	BuildMetadata BuildMetadata
+}
+
+// BuildMetadata is immutable release identity embedded by a plugin build. The
+// zero value preserves compatibility with plugins that predate build metadata.
+type BuildMetadata struct {
+	PluginVersion       string
+	SDKVersion          string
+	SourceCommit        string
+	Features            []string
+	RuntimeRequirements map[string]string
 }
 
 type manifestScannerPlugin struct {
@@ -197,6 +319,11 @@ func PluginMapWithManifest(impl Scanner, manifest contract.Manifest, opts Manife
 	if len(d.Manifest().Outputs) > 0 && opts.OutputMapper == nil {
 		return nil, fmt.Errorf("output mapper is required")
 	}
+	if err := validateBuildMetadata(opts.BuildMetadata); err != nil {
+		return nil, err
+	}
+	opts.BuildMetadata.Features = append([]string(nil), opts.BuildMetadata.Features...)
+	opts.BuildMetadata.RuntimeRequirements = cloneStrings(opts.BuildMetadata.RuntimeRequirements)
 	return map[string]plugin.Plugin{PluginName: &manifestScannerPlugin{impl: impl, descriptor: d, options: opts}}, nil
 }
 
@@ -242,6 +369,7 @@ type GRPCClient struct {
 var _ Scanner = (*GRPCClient)(nil)
 var _ ContractExecutor = (*GRPCClient)(nil)
 var _ Describer = (*GRPCClient)(nil)
+var _ Checker = (*GRPCClient)(nil)
 
 func (m *GRPCClient) Capability(ctx context.Context) (string, error) {
 	resp, err := m.client.Capability(ctx, &scanv1.CapabilityRequest{})
@@ -257,7 +385,7 @@ func (m *GRPCClient) Execute(ctx context.Context, t Target) (Result, error) {
 		Params: t.Params,
 	})
 	if err != nil {
-		return Result{}, err
+		return Result{}, decodeExecutionError(err)
 	}
 	return Result{
 		Capability:         resp.GetCapability(),
@@ -270,12 +398,12 @@ func (m *GRPCClient) Execute(ctx context.Context, t Target) (Result, error) {
 func (m *GRPCClient) ExecuteStream(ctx context.Context, t Target, sink EventSink) (Result, error) {
 	stream, err := m.client.ExecuteStream(ctx, &scanv1.ExecuteRequest{Host: t.Host, Params: t.Params})
 	if err != nil {
-		return Result{}, err
+		return Result{}, decodeExecutionError(err)
 	}
 	for {
 		msg, recvErr := stream.Recv()
 		if recvErr != nil {
-			return Result{}, recvErr
+			return Result{}, decodeExecutionError(recvErr)
 		}
 		if progress := msg.GetProgress(); progress != nil {
 			if sink != nil {
@@ -311,7 +439,23 @@ func (m *GRPCClient) Describe(ctx context.Context) (Description, error) {
 	if e != nil {
 		return Description{}, e
 	}
-	return Description{Capability: r.GetCapability(), CanonicalManifestJSON: append([]byte(nil), r.GetCanonicalManifestJson()...), ContractID: r.GetContractId(), ContractDigest: r.GetContractDigest(), ManifestSHA256: r.GetManifestSha256(), ProtocolVersion: r.GetProtocolVersion()}, nil
+	return Description{Capability: r.GetCapability(), CanonicalManifestJSON: append([]byte(nil), r.GetCanonicalManifestJson()...), ContractID: r.GetContractId(), ContractDigest: r.GetContractDigest(), ManifestSHA256: r.GetManifestSha256(), ProtocolVersion: r.GetProtocolVersion(), PluginVersion: r.GetPluginVersion(), SDKVersion: r.GetSdkVersion(), SourceCommit: r.GetSourceCommit(), Features: append([]string(nil), r.GetFeatures()...), RuntimeRequirements: cloneStrings(r.GetRuntimeRequirements())}, nil
+}
+
+func (m *GRPCClient) Check(ctx context.Context) (CheckResult, error) {
+	r, err := m.client.Check(ctx, &scanv1.CheckRequest{})
+	if err != nil {
+		return CheckResult{}, err
+	}
+	issues := make([]CheckIssue, len(r.GetIssues()))
+	for i, issue := range r.GetIssues() {
+		issues[i] = CheckIssue{Code: issue.GetCode(), Message: issue.GetMessage()}
+	}
+	result := CheckResult{Status: CheckStatus(r.GetStatus()), Issues: issues}
+	if err := validateCheckResult(result); err != nil {
+		return CheckResult{}, status.Error(codes.FailedPrecondition, "plugin returned an invalid check result")
+	}
+	return result, nil
 }
 func (m *GRPCClient) ExecuteContract(ctx context.Context, q ContractRequest) (ContractResult, error) {
 	if (q.ContractID == "") != (q.ContractDigest == "") {
@@ -325,7 +469,7 @@ func (m *GRPCClient) ExecuteContract(ctx context.Context, q ContractRequest) (Co
 	}
 	r, e := m.client.Execute(ctx, &scanv1.ExecuteRequest{Host: q.Target.Host, Params: q.Target.Params, ContractId: q.ContractID, ContractDigest: q.ContractDigest})
 	if e != nil {
-		return ContractResult{}, e
+		return ContractResult{}, decodeExecutionError(e)
 	}
 	if r.GetContractId() != q.ContractID || r.GetContractDigest() != q.ContractDigest {
 		return ContractResult{}, status.Error(codes.FailedPrecondition, "contract pin mismatch")
@@ -344,7 +488,7 @@ func (m *GRPCClient) ExecuteStreamContract(ctx context.Context, q ContractReques
 	}
 	st, e := m.client.ExecuteStream(ctx, &scanv1.ExecuteRequest{Host: q.Target.Host, Params: q.Target.Params, ContractId: q.ContractID, ContractDigest: q.ContractDigest})
 	if e != nil {
-		return ContractResult{}, e
+		return ContractResult{}, decodeExecutionError(e)
 	}
 	for {
 		ev, e := st.Recv()
@@ -352,7 +496,7 @@ func (m *GRPCClient) ExecuteStreamContract(ctx context.Context, q ContractReques
 			return ContractResult{}, status.Error(codes.FailedPrecondition, "contract stream ended without a result")
 		}
 		if e != nil {
-			return ContractResult{}, e
+			return ContractResult{}, decodeExecutionError(e)
 		}
 		if p := ev.GetProgress(); p != nil {
 			if sink != nil {
@@ -439,11 +583,11 @@ func (m *gRPCServer) Capability(ctx context.Context, _ *scanv1.CapabilityRequest
 func (m *gRPCServer) Execute(ctx context.Context, req *scanv1.ExecuteRequest) (*scanv1.ExecuteResponse, error) {
 	if req.GetContractId() != "" || req.GetContractDigest() != "" {
 		r, e := m.executeContract(ctx, req, false, nil)
-		return r, e
+		return r, executionStatusError(e)
 	}
 	res, err := m.impl.Execute(ctx, Target{Host: req.GetHost(), Params: req.GetParams()})
 	if err != nil {
-		return nil, err
+		return nil, executionStatusError(err)
 	}
 	return &scanv1.ExecuteResponse{
 		Capability:         res.Capability,
@@ -462,7 +606,7 @@ func (m *gRPCServer) ExecuteStream(req *scanv1.ExecuteRequest, stream scanv1.Sca
 			return stream.Send(&scanv1.ExecuteEvent{Payload: &scanv1.ExecuteEvent_Progress{Progress: &scanv1.ProgressEvent{Sequence: e.Sequence, Level: e.Level, Type: e.Type, Message: e.Message, Fields: boundedFields(e.Fields), OccurredAt: timestamppb.New(e.OccurredAt)}}})
 		})
 		if e != nil {
-			return e
+			return executionStatusError(e)
 		}
 		return stream.Send(&scanv1.ExecuteEvent{Payload: &scanv1.ExecuteEvent_Result{Result: res}})
 	}
@@ -473,7 +617,7 @@ func (m *gRPCServer) ExecuteStream(req *scanv1.ExecuteRequest, stream scanv1.Sca
 		return stream.Send(&scanv1.ExecuteEvent{Payload: &scanv1.ExecuteEvent_Progress{Progress: &scanv1.ProgressEvent{Sequence: event.Sequence, Level: event.Level, Type: event.Type, Message: event.Message, Fields: boundedFields(event.Fields), OccurredAt: timestamppb.New(event.OccurredAt)}}})
 	})
 	if err != nil {
-		return err
+		return executionStatusError(err)
 	}
 	return stream.Send(&scanv1.ExecuteEvent{Payload: &scanv1.ExecuteEvent_Result{Result: &scanv1.ExecuteResponse{Capability: res.Capability, RawJson: res.RawJSON, StartedAtUnixNano: res.StartedAtUnixNano, FinishedAtUnixNano: res.FinishedAtUnixNano}}})
 }
@@ -482,7 +626,27 @@ func (m *gRPCServer) Describe(context.Context, *scanv1.DescribeRequest) (*scanv1
 	if m.contract == nil {
 		return nil, status.Error(codes.Unimplemented, "manifest unavailable")
 	}
-	return &scanv1.DescribeResponse{Capability: m.contract.Manifest().Capability, CanonicalManifestJson: m.contract.CanonicalJSON(), ContractId: m.contract.Manifest().ContractID, ContractDigest: m.contract.Digest(), ManifestSha256: m.contract.ManifestDigest(), ProtocolVersion: ContractProtocolVersion}, nil
+	metadata := m.options.BuildMetadata
+	return &scanv1.DescribeResponse{Capability: m.contract.Manifest().Capability, CanonicalManifestJson: m.contract.CanonicalJSON(), ContractId: m.contract.Manifest().ContractID, ContractDigest: m.contract.Digest(), ManifestSha256: m.contract.ManifestDigest(), ProtocolVersion: ContractProtocolVersion, PluginVersion: metadata.PluginVersion, SdkVersion: metadata.SDKVersion, SourceCommit: metadata.SourceCommit, Features: append([]string(nil), metadata.Features...), RuntimeRequirements: cloneStrings(metadata.RuntimeRequirements)}, nil
+}
+
+func (m *gRPCServer) Check(ctx context.Context, _ *scanv1.CheckRequest) (*scanv1.CheckResponse, error) {
+	checker, ok := m.impl.(Checker)
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "check unavailable")
+	}
+	result, err := checker.Check(ctx)
+	if err != nil {
+		return nil, contextStatusError(err)
+	}
+	if err := validateCheckResult(result); err != nil {
+		return nil, status.Error(codes.Internal, "plugin returned an invalid check result")
+	}
+	issues := make([]*scanv1.CheckIssue, len(result.Issues))
+	for i, issue := range result.Issues {
+		issues[i] = &scanv1.CheckIssue{Code: issue.Code, Message: issue.Message}
+	}
+	return &scanv1.CheckResponse{Status: string(result.Status), Issues: issues}, nil
 }
 func (m *gRPCServer) executeContract(ctx context.Context, req *scanv1.ExecuteRequest, stream bool, sink EventSink) (*scanv1.ExecuteResponse, error) {
 	if (req.GetContractId() == "") != (req.GetContractDigest() == "") {
@@ -607,6 +771,173 @@ func boundedFields(fields map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+func cloneStrings(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func safeCode(value string) bool {
+	if value == "" || len(value) > 64 || value[0] < 'a' || value[0] > 'z' {
+		return false
+	}
+	for _, char := range value[1:] {
+		if char < 'a' || char > 'z' {
+			if char < '0' || char > '9' {
+				if char != '_' && char != '-' {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+func safeMessage(value string) bool {
+	if value == "" || len(value) > 512 || !utf8.ValidString(value) {
+		return false
+	}
+	for _, char := range value {
+		if char < 0x20 || char == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func validateCheckResult(result CheckResult) error {
+	if result.Status != CheckStatusOK && result.Status != CheckStatusDegraded && result.Status != CheckStatusUnhealthy {
+		return errors.New("invalid check status")
+	}
+	if len(result.Issues) > 32 {
+		return errors.New("too many check issues")
+	}
+	for _, issue := range result.Issues {
+		if !safeCode(issue.Code) || !safeMessage(issue.Message) {
+			return errors.New("invalid check issue")
+		}
+	}
+	return nil
+}
+
+func validateExecutionError(executionError *ExecutionError) bool {
+	if executionError == nil || !safeCode(executionError.Code) || !safeMessage(executionError.Message) || len(executionError.Details) > 16 {
+		return false
+	}
+	for key, value := range executionError.Details {
+		if !safeCode(key) || len(value) > 256 || !utf8.ValidString(value) {
+			return false
+		}
+		for _, char := range value {
+			if char < 0x20 || char == 0x7f {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+var buildVersionPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
+
+func validateBuildMetadata(metadata BuildMetadata) error {
+	empty := metadata.PluginVersion == "" && metadata.SDKVersion == "" && metadata.SourceCommit == "" && metadata.Features == nil && metadata.RuntimeRequirements == nil
+	if empty {
+		return nil
+	}
+	if !buildVersionPattern.MatchString(metadata.PluginVersion) || !buildVersionPattern.MatchString(metadata.SDKVersion) || len(metadata.SourceCommit) != 40 {
+		return errors.New("invalid plugin build identity")
+	}
+	for _, char := range metadata.SourceCommit {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return errors.New("invalid plugin build identity")
+		}
+	}
+	if metadata.Features == nil || metadata.RuntimeRequirements == nil || len(metadata.Features) > 32 || len(metadata.RuntimeRequirements) > 32 {
+		return errors.New("invalid plugin build metadata")
+	}
+	seenFeatures := make(map[string]struct{}, len(metadata.Features))
+	for i, feature := range metadata.Features {
+		if !safeCode(feature) {
+			return errors.New("invalid plugin build feature")
+		}
+		if i > 0 && metadata.Features[i-1] >= feature {
+			return errors.New("plugin build features are not in canonical order")
+		}
+		if _, duplicate := seenFeatures[feature]; duplicate {
+			return errors.New("duplicate plugin build feature")
+		}
+		seenFeatures[feature] = struct{}{}
+	}
+	for key, value := range metadata.RuntimeRequirements {
+		if !safeCode(key) || value == "" || len(value) > 256 || !utf8.ValidString(value) {
+			return errors.New("invalid plugin runtime requirement")
+		}
+		for _, char := range value {
+			if char < 0x20 || char == 0x7f {
+				return errors.New("invalid plugin runtime requirement")
+			}
+		}
+	}
+	return nil
+}
+
+func contextStatusError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return status.FromContextError(err).Err()
+	}
+	return err
+}
+
+func executionStatusError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return status.FromContextError(err).Err()
+	}
+	executionError, ok := AsExecutionError(err)
+	if !ok {
+		return err
+	}
+	if !validateExecutionError(executionError) {
+		return status.Error(codes.Internal, "plugin returned an invalid execution error")
+	}
+	detail := &scanv1.ExecutionErrorDetail{Code: executionError.Code, Message: executionError.Message, Retryable: executionError.Retryable, Details: cloneStrings(executionError.Details)}
+	withDetails, detailErr := status.New(codes.Unknown, executionError.Error()).WithDetails(detail)
+	if detailErr != nil {
+		return status.Error(codes.Internal, "could not encode execution error")
+	}
+	return withDetails.Err()
+}
+
+func decodeExecutionError(err error) error {
+	if err == nil {
+		return nil
+	}
+	grpcStatus, ok := status.FromError(err)
+	if !ok || grpcStatus.Code() == codes.Canceled || grpcStatus.Code() == codes.DeadlineExceeded {
+		return err
+	}
+	for _, detail := range grpcStatus.Details() {
+		if executionDetail, ok := detail.(*scanv1.ExecutionErrorDetail); ok {
+			executionError := &ExecutionError{Code: executionDetail.GetCode(), Message: executionDetail.GetMessage(), Retryable: executionDetail.GetRetryable(), Details: cloneStrings(executionDetail.GetDetails()), status: grpcStatus}
+			if validateExecutionError(executionError) {
+				return executionError
+			}
+			return err
+		}
+	}
+	return err
 }
 
 func (m *gRPCServer) Prepare(ctx context.Context, req *scanv1.PrepareRequest) (*scanv1.PrepareResponse, error) {

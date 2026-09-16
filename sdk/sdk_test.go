@@ -25,6 +25,8 @@ type stubScanner struct {
 	startedStream  chan struct{}
 	blockExecute   bool
 	blockStream    bool
+	executeErr     error
+	streamErr      error
 }
 
 func (s *stubScanner) Capability(context.Context) (string, error)    { return "portscan", nil }
@@ -37,6 +39,9 @@ func (s *stubScanner) Execute(ctx context.Context, t sdk.Target) (sdk.Result, er
 	if s.blockExecute {
 		<-ctx.Done()
 		return sdk.Result{}, ctx.Err()
+	}
+	if s.executeErr != nil {
+		return sdk.Result{}, s.executeErr
 	}
 	raw, _ := json.Marshal(map[string]any{"host": t.Host, "echo": t.Params["k"]})
 	return sdk.Result{Capability: "portscan", RawJSON: raw, StartedAtUnixNano: 1000, FinishedAtUnixNano: 2000}, nil
@@ -55,6 +60,9 @@ func (s *stubScanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.
 		<-ctx.Done()
 		return sdk.Result{}, ctx.Err()
 	}
+	if s.streamErr != nil {
+		return sdk.Result{}, s.streamErr
+	}
 	if sink != nil {
 		if err := sink(sdk.Event{Sequence: 1, Level: "info", Type: "scan_started", Message: "started", OccurredAt: time.Unix(1, 0).UTC()}); err != nil {
 			return sdk.Result{}, err
@@ -62,6 +70,12 @@ func (s *stubScanner) ExecuteStream(ctx context.Context, t sdk.Target, sink sdk.
 	}
 	raw, _ := json.Marshal(map[string]any{"host": t.Host, "echo": t.Params["k"]})
 	return sdk.Result{Capability: "portscan", RawJSON: raw, StartedAtUnixNano: 1000, FinishedAtUnixNano: 2000}, nil
+}
+
+type checkedScanner struct{ *stubScanner }
+
+func (checkedScanner) Check(context.Context) (sdk.CheckResult, error) {
+	return sdk.CheckResult{Status: sdk.CheckStatusDegraded, Issues: []sdk.CheckIssue{{Code: "dependency_slow", Message: "dependency response is slow"}}}, nil
 }
 
 var _ = Describe("SDK", func() {
@@ -72,6 +86,11 @@ var _ = Describe("SDK", func() {
 		Expect(sdk.Capabilities()[0]).To(Equal("subdomain"))
 		Expect(sdk.SupportsCapability("cloudlist")).To(BeTrue())
 		Expect(sdk.SupportsCapability("unknown")).To(BeFalse())
+		metadata, ok := sdk.LookupCapability("subdomain")
+		Expect(ok).To(BeTrue())
+		Expect(metadata).To(Equal(sdk.CapabilityMetadata{Capability: "subdomain", Module: "subfinder"}))
+		_, ok = sdk.LookupCapability("unknown")
+		Expect(ok).To(BeFalse())
 	})
 
 	It("round-trips manifest description and canonical contract execution", func() {
@@ -89,6 +108,8 @@ var _ = Describe("SDK", func() {
 		Expect(handled).To(BeFalse())
 		stub := &stubScanner{}
 		calls := 0
+		features := []string{"check", "execute_stream"}
+		requirements := map[string]string{"libc": "glibc"}
 		pm, err := sdk.PluginMapWithManifest(stub, manifest, sdk.ManifestOptions{
 			TargetMapper: func(target sdk.Target) (sdk.Target, error) {
 				target.Params["mapped"] = "true"
@@ -99,8 +120,11 @@ var _ = Describe("SDK", func() {
 				v, e := contract.Host(t.Host)
 				return []contract.NamedOutput{{Name: "host", Values: []contract.Value{v}}}, e
 			},
+			BuildMetadata: sdk.BuildMetadata{PluginVersion: "v1.2.3", SDKVersion: "v0.6.0", SourceCommit: string(bytes.Repeat([]byte("a"), 40)), Features: features, RuntimeRequirements: requirements},
 		})
 		Expect(err).NotTo(HaveOccurred())
+		features[0] = "changed"
+		requirements["libc"] = "changed"
 		conn, _ := goplugin.TestPluginGRPCConn(GinkgoTB(), false, pm)
 		DeferCleanup(func() { conn.Close() })
 		raw, err := conn.Dispense(sdk.PluginName)
@@ -115,6 +139,11 @@ var _ = Describe("SDK", func() {
 		Expect(got.ContractDigest).To(Equal(d.Digest()))
 		Expect(got.ManifestSHA256).To(Equal(d.ManifestDigest()))
 		Expect(got.ProtocolVersion).To(Equal(uint32(1)))
+		Expect(got.PluginVersion).To(Equal("v1.2.3"))
+		Expect(got.SDKVersion).To(Equal("v0.6.0"))
+		Expect(got.SourceCommit).To(Equal(string(bytes.Repeat([]byte("a"), 40))))
+		Expect(got.Features).To(Equal([]string{"check", "execute_stream"}))
+		Expect(got.RuntimeRequirements).To(Equal(map[string]string{"libc": "glibc"}))
 		res, err := ce.ExecuteContract(context.Background(), sdk.ContractRequest{Target: sdk.Target{Host: "EXAMPLE.COM"}, ContractID: manifest.ContractID, ContractDigest: d.Digest()})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(stub.gotTarget.Host).To(Equal("example.com"))
@@ -160,6 +189,8 @@ var _ = Describe("SDK", func() {
 		Expect(err).NotTo(HaveOccurred())
 		_, err = raw.(sdk.Describer).Describe(context.Background())
 		Expect(status.Code(err)).To(Equal(codes.Unimplemented))
+		_, err = raw.(sdk.Checker).Check(context.Background())
+		Expect(status.Code(err)).To(Equal(codes.Unimplemented))
 		_, err = raw.(sdk.ContractExecutor).ExecuteContract(context.Background(), sdk.ContractRequest{Target: sdk.Target{Host: "example.com"}, ContractID: "vpt/portscan/v1", ContractDigest: "sha256:" + string(bytes.Repeat([]byte("0"), 64))})
 		Expect(status.Code(err)).To(Equal(codes.FailedPrecondition))
 
@@ -170,6 +201,61 @@ var _ = Describe("SDK", func() {
 		manifest.Outputs = []contract.Output{{Name: "hosts", Type: "host/v1", Cardinality: "many"}}
 		_, err = sdk.PluginMapWithManifest(stub, manifest, sdk.ManifestOptions{})
 		Expect(err).To(MatchError(ContainSubstring("output mapper")))
+
+		manifest.Outputs = []contract.Output{}
+		_, err = sdk.PluginMapWithManifest(stub, manifest, sdk.ManifestOptions{BuildMetadata: sdk.BuildMetadata{PluginVersion: "v1.2.3"}})
+		Expect(err).To(MatchError(ContainSubstring("build identity")))
+	})
+
+	It("round-trips optional safe health checks", func() {
+		impl := checkedScanner{stubScanner: &stubScanner{}}
+		conn, _ := goplugin.TestPluginGRPCConn(GinkgoTB(), false, sdk.PluginMap(impl))
+		DeferCleanup(func() { conn.Close() })
+		raw, err := conn.Dispense(sdk.PluginName)
+		Expect(err).NotTo(HaveOccurred())
+		result, err := raw.(sdk.Checker).Check(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(sdk.CheckResult{Status: sdk.CheckStatusDegraded, Issues: []sdk.CheckIssue{{Code: "dependency_slow", Message: "dependency response is slow"}}}))
+	})
+
+	It("round-trips typed execution errors without changing Scanner", func() {
+		details := map[string]string{"stage": "discovery"}
+		typed := sdk.NewExecutionError("tool_failed", "scanner tool failed", true, details)
+		details["stage"] = "changed"
+		stub := &stubScanner{executeErr: typed, streamErr: typed}
+		conn, _ := goplugin.TestPluginGRPCConn(GinkgoTB(), false, sdk.PluginMap(stub))
+		DeferCleanup(func() { conn.Close() })
+		raw, err := conn.Dispense(sdk.PluginName)
+		Expect(err).NotTo(HaveOccurred())
+		scanner := raw.(sdk.Scanner)
+
+		_, err = scanner.Execute(context.Background(), sdk.Target{Host: "example.com"})
+		Expect(status.Code(err)).To(Equal(codes.Unknown))
+		executionError, ok := sdk.AsExecutionError(err)
+		Expect(ok).To(BeTrue())
+		Expect(executionError.Code).To(Equal("tool_failed"))
+		Expect(executionError.Message).To(Equal("scanner tool failed"))
+		Expect(executionError.Retryable).To(BeTrue())
+		Expect(executionError.Details).To(Equal(map[string]string{"stage": "discovery"}))
+		executionError.Details["stage"] = "mutated"
+		again, ok := sdk.AsExecutionError(err)
+		Expect(ok).To(BeTrue())
+		Expect(again.Details["stage"]).To(Equal("discovery"))
+
+		_, err = scanner.ExecuteStream(context.Background(), sdk.Target{Host: "example.com"}, nil)
+		streamError, ok := sdk.AsExecutionError(err)
+		Expect(ok).To(BeTrue())
+		Expect(streamError.Code).To(Equal("tool_failed"))
+
+		stub.executeErr = sdk.NewExecutionError("INVALID CODE", "scanner tool failed", false, nil)
+		_, err = scanner.Execute(context.Background(), sdk.Target{Host: "example.com"})
+		Expect(status.Code(err)).To(Equal(codes.Internal))
+		_, ok = sdk.AsExecutionError(err)
+		Expect(ok).To(BeFalse())
+
+		var nilExecutionError *sdk.ExecutionError
+		_, ok = sdk.AsExecutionError(nilExecutionError)
+		Expect(ok).To(BeFalse())
 	})
 	It("keeps the handshake protocol version", func() {
 		Expect(sdk.Handshake.ProtocolVersion).To(Equal(uint(1)), "want 1 for additive ExecuteStream rollout")
@@ -224,6 +310,7 @@ var _ = Describe("SDK", func() {
 		cancel()
 		Eventually(done).Should(BeClosed())
 		Expect(callErr).To(HaveOccurred())
+		Expect(status.Code(callErr)).To(Equal(codes.Canceled))
 		Expect(result).To(Equal(sdk.Result{}))
 	})
 
@@ -243,6 +330,7 @@ var _ = Describe("SDK", func() {
 		cancel()
 		Eventually(done).Should(BeClosed())
 		Expect(callErr).To(HaveOccurred())
+		Expect(status.Code(callErr)).To(Equal(codes.Canceled))
 		Expect(result).To(Equal(sdk.Result{}))
 	})
 
