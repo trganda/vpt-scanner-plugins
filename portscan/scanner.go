@@ -35,6 +35,10 @@ func newWithScanner(ps portScanner, timeout time.Duration) *scanner {
 
 func (s *scanner) Capability(context.Context) (string, error) { return capability, nil }
 
+func (s *scanner) Check(context.Context) (sdk.CheckResult, error) {
+	return sdk.CheckResult{Status: sdk.CheckStatusOK}, nil
+}
+
 // Prepare is a no-op for portscan — only nuclei needs a pre-scan hook.
 func (s *scanner) Prepare(context.Context, string) error { return nil }
 

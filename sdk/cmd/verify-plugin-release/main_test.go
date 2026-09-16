@@ -16,9 +16,9 @@ func TestVerify(t *testing.T) {
 		Plugins: []release.Plugin{{Capability: "portscan", PluginVersion: "v1.2.3", Artifacts: []release.Artifact{
 			{Name: "portscan_linux_amd64", OS: "linux", Architecture: "amd64", SHA256: "sha256:" + strings.Repeat("1", 64)},
 			{Name: "portscan_linux_arm64", OS: "linux", Architecture: "arm64", SHA256: "sha256:" + strings.Repeat("2", 64)},
-		}, Features: []string{"execute_stream", "typed_contracts"}, RuntimeRequirements: map[string]string{"libc": "glibc", "os": "linux"}}},
+		}, Features: []string{"check", "execute_stream", "typed_contracts"}, RuntimeRequirements: map[string]string{"libc": "glibc", "os": "linux"}}},
 	}
-	description := sdk.Description{Capability: "portscan", PluginVersion: "v1.2.3", SDKVersion: sdk.Version, SourceCommit: descriptor.Source.Commit, ProtocolVersion: sdk.ContractProtocolVersion, Features: []string{"execute_stream", "typed_contracts"}, RuntimeRequirements: map[string]string{"libc": "glibc", "os": "linux"}}
+	description := sdk.Description{Capability: "portscan", PluginVersion: "v1.2.3", SDKVersion: sdk.Version, SourceCommit: descriptor.Source.Commit, ProtocolVersion: sdk.ContractProtocolVersion, Features: []string{"check", "execute_stream", "typed_contracts"}, RuntimeRequirements: map[string]string{"libc": "glibc", "os": "linux"}}
 	if err := verify(description, descriptor, "portscan"); err != nil {
 		t.Fatal(err)
 	}

@@ -44,6 +44,13 @@ func newWithEnumerator(enum enumerator, timeout time.Duration) *scanner {
 
 func (s *scanner) Capability(context.Context) (string, error) { return capability, nil }
 
+func (s *scanner) Check(context.Context) (sdk.CheckResult, error) {
+	if s.initErr != nil {
+		return sdk.CheckResult{Status: sdk.CheckStatusUnhealthy, Issues: []sdk.CheckIssue{{Code: "initialization_failed", Message: "plugin initialization failed"}}}, nil
+	}
+	return sdk.CheckResult{Status: sdk.CheckStatusOK}, nil
+}
+
 // Prepare is a no-op for subdomain — only nuclei needs a pre-scan hook.
 func (s *scanner) Prepare(context.Context, string) error { return nil }
 

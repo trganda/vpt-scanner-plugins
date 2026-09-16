@@ -32,7 +32,13 @@ func newWithEnumerator(enum cloudEnumerator, cfg config) *scanner {
 }
 
 func (s *scanner) Capability(context.Context) (string, error) { return capability, nil }
-func (s *scanner) Prepare(context.Context, string) error      { return nil }
+func (s *scanner) Check(context.Context) (sdk.CheckResult, error) {
+	if s.initErr != nil {
+		return sdk.CheckResult{Status: sdk.CheckStatusUnhealthy, Issues: []sdk.CheckIssue{{Code: "initialization_failed", Message: "plugin initialization failed"}}}, nil
+	}
+	return sdk.CheckResult{Status: sdk.CheckStatusOK}, nil
+}
+func (s *scanner) Prepare(context.Context, string) error { return nil }
 func (s *scanner) Execute(ctx context.Context, t sdk.Target) (sdk.Result, error) {
 	return s.ExecuteStream(ctx, t, nil)
 }

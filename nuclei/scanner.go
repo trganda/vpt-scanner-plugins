@@ -43,6 +43,13 @@ func newWithEngine(eng engine) *scanner {
 
 func (s *scanner) Capability(context.Context) (string, error) { return capability, nil }
 
+func (s *scanner) Check(context.Context) (sdk.CheckResult, error) {
+	if s.initErr != nil {
+		return sdk.CheckResult{Status: sdk.CheckStatusUnhealthy, Issues: []sdk.CheckIssue{{Code: "initialization_failed", Message: "plugin initialization failed"}}}, nil
+	}
+	return sdk.CheckResult{Status: sdk.CheckStatusOK}, nil
+}
+
 // Prepare syncs the persistent template cache before scans run. authToken is
 // the node JWT the host read from its token holder at call time.
 func (s *scanner) Prepare(ctx context.Context, authToken string) error {

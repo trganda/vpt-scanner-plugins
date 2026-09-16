@@ -3,10 +3,21 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/trganda/vpt-scanner-plugins/sdk"
 )
+
+func TestScannerCheckReportsDeferredInitializationFailure(t *testing.T) {
+	result, err := (&scanner{initErr: errors.New("secret config detail")}).Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != sdk.CheckStatusUnhealthy || len(result.Issues) != 1 || result.Issues[0].Message != "plugin initialization failed" {
+		t.Fatalf("unexpected check result: %#v", result)
+	}
+}
 
 type fakeEnumerator struct {
 	domain string

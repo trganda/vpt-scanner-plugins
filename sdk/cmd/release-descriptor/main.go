@@ -53,7 +53,7 @@ func run(args []string, output io.Writer) error {
 		plugin := release.Plugin{
 			Capability:          capability,
 			PluginVersion:       version,
-			Features:            []string{"execute_stream", "typed_contracts"},
+			Features:            []string{"check", "execute_stream", "typed_contracts"},
 			RuntimeRequirements: map[string]string{"libc": "glibc", "os": "linux"},
 		}
 		for _, architecture := range []string{"amd64", "arm64"} {
